@@ -1,0 +1,25 @@
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+*.log
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Alembic
+backend/alembic/versions/__pycache__/
+
+# OS
+.DS_Store
+Thumbs.db
