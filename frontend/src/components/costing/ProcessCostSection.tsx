@@ -4,7 +4,7 @@ import { toast } from "sonner"
 import { partsApi } from "../../api/parts"
 import { Button } from "../ui/button"
 import { cn, compareLevelNo, levelDepth } from "../../lib/utils"
-import type { CostingLine, CostingSheetWithLines } from "../../types/parts"
+import type { CostingLine, CostSheetWithLines } from "../../types/parts"
 import type { NormsLookup, ProcessRate } from "../../types/norms"
 
 // ---------------------------------------------------------------------------
@@ -646,7 +646,7 @@ export function ProcessCostSection({
   onEditLine,
   onDeleteLine,
 }: {
-  sheet: CostingSheetWithLines
+  sheet: CostSheetWithLines
   normsLookup: NormsLookup | undefined
   gradeMap: Record<number, string>
   onEditLine: (line: CostingLine) => void

@@ -8,8 +8,9 @@ import type {
   RmPriceTrendPoint,
   SectionCategory,
 } from "../types/norms"
+import { API_BASE_URL } from "../lib/apiBase"
 
-const BASE = "/api/v1/norms"
+const BASE = API_BASE_URL + "/api/v1/norms"
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {

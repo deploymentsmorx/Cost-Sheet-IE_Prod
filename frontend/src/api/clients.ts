@@ -1,6 +1,7 @@
 import type { Client } from "../types/clients"
+import { API_BASE_URL } from "../lib/apiBase"
 
-const BASE = "/api/v1/clients"
+const BASE = API_BASE_URL + "/api/v1/clients"
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(BASE + path, {

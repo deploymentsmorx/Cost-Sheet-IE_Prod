@@ -10,8 +10,9 @@ import type {
   Workbook,
   WorkbookSummaryOut,
 } from "../types/parts"
+import { API_BASE_URL } from "../lib/apiBase"
 
-const BASE = "/api/v1"
+const BASE = API_BASE_URL + "/api/v1"
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(BASE + path, {

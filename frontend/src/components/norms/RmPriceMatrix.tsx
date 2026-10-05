@@ -4,11 +4,9 @@ import { toast } from "sonner"
 import { normsApi } from "../../api/norms"
 import type { MaterialGrade, NormLibraryDetail, RmPriceBand } from "../../types/norms"
 import { Button } from "../ui/button"
-import { cn, fmt, fmtDate } from "../../lib/utils"
+import { fmt, fmtDate } from "../../lib/utils"
 
 const THICKNESS_ORDER = ["<10mm", "12mm", ">12-19mm", "20mm", ">20-40mm", ">40-63mm", "80mm"]
-
-const UNITS = ["Rs/Kg", "Rs/Hr", "Rs/mm/meter", "Rs/slant/meter", "Rs/Nos", "Rs/Sqm", "%"]
 
 interface Props {
   detail: NormLibraryDetail
