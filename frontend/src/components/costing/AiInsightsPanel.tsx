@@ -112,9 +112,6 @@ export function AiInsightsPanel({ sheetId }: { sheetId: number }) {
         <div className="flex items-center gap-2">
           <Sparkles className="w-4 h-4 text-violet-500" />
           <span className="text-[11px] font-bold uppercase tracking-widest text-slate-500">AI Insights</span>
-          <span className="text-[10px] bg-violet-100 text-violet-700 font-semibold px-1.5 py-0.5 rounded-full">
-            Powered by Claude
-          </span>
         </div>
         <Button
           size="sm"
