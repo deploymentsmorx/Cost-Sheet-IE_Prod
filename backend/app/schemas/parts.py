@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -15,12 +15,14 @@ class WorkbookCreate(BaseModel):
     name: str
     client_id: int
     description: str | None = None
+    sets_count: int = 1
 
 
 class WorkbookUpdate(BaseModel):
     name: str | None = None
     client_id: int | None = None
     description: str | None = None
+    sets_count: int | None = None
 
 
 class WorkbookOut(BaseModel):
@@ -31,6 +33,7 @@ class WorkbookOut(BaseModel):
     client_id: int
     client_name: str | None = None
     description: str | None
+    sets_count: int
     created_at: datetime
     sheet_count: int = 0
 
@@ -45,6 +48,11 @@ class CostSheetCreate(BaseModel):
     description: str | None = None
     drawing_no: str | None = None
     benchmark_price: Decimal | None = None
+    image_url: str | None = None
+    qty_per_set: Decimal = Decimal("1")
+    is_optional: bool = False
+    status: str | None = None
+    remarks: str | None = None
     supply_version: str = "V1"
     discount_pct: Decimal = Decimal("0")
     transport_cost: Decimal = Decimal("0")
@@ -56,6 +64,11 @@ class CostSheetUpdate(BaseModel):
     description: str | None = None
     drawing_no: str | None = None
     benchmark_price: Decimal | None = None
+    image_url: str | None = None
+    qty_per_set: Decimal | None = None
+    is_optional: bool | None = None
+    status: str | None = None
+    remarks: str | None = None
     supply_version: str | None = None
     discount_pct: Decimal | None = None
     transport_cost: Decimal | None = None
@@ -70,6 +83,8 @@ class BOLineItemCreate(BaseModel):
     description: str | None = None
     qty: Decimal = Decimal("1")
     unit_price: Decimal = Decimal("0")
+    catalog_item_id: int | None = None
+    unit_weight_kg: Decimal | None = None
 
 
 class BOLineItemUpdate(BaseModel):
@@ -77,6 +92,8 @@ class BOLineItemUpdate(BaseModel):
     description: str | None = None
     qty: Decimal | None = None
     unit_price: Decimal | None = None
+    catalog_item_id: int | None = None
+    unit_weight_kg: Decimal | None = None
 
 
 class BOLineItemOut(BaseModel):
@@ -89,6 +106,8 @@ class BOLineItemOut(BaseModel):
     qty: Decimal
     unit_price: Decimal
     bo_line_cost: Decimal
+    catalog_item_id: int | None = None
+    unit_weight_kg: Decimal | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +163,7 @@ class SheetFinishingOpOut(BaseModel):
 
 class CostingLineCreate(BaseModel):
     sl_no: int | None = None
+    parent_line_id: int | None = None
     description: str | None = None
     spec: str | None = None
     grade_id: int | None = None
@@ -155,6 +175,7 @@ class CostingLineCreate(BaseModel):
 
 
 class CostingLineUpdate(BaseModel):
+    parent_line_id: int | None = None
     description: str | None = None
     spec: str | None = None
     grade_id: int | None = None
@@ -187,6 +208,8 @@ class CostingLineOut(BaseModel):
     id: int
     cost_sheet_id: int
     sl_no: int
+    parent_line_id: int | None = None
+    level_no: str | None = None
     description: str | None
     spec: str | None
     grade_id: int | None
@@ -282,6 +305,37 @@ class ProcessCostRowOut(BaseModel):
     total_wt: Decimal = Decimal("0")
 
 
+# ---------------------------------------------------------------------------
+# Price History & Repricing
+# ---------------------------------------------------------------------------
+
+class PriceHistoryEntryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    cost_sheet_id: int
+    change_no: int
+    price: Decimal
+    rm_reference_price: Decimal | None = None
+    discount_pct: Decimal
+    pct_change_vs_last_supplied: Decimal | None = None
+    recorded_at: datetime
+
+
+class RepriceResultItem(BaseModel):
+    sheet_id: int
+    name: str
+    before_price: Decimal
+    after_price: Decimal
+    pct_change: Decimal | None = None
+
+
+class RepriceResponse(BaseModel):
+    workbook_id: int
+    repriced_count: int
+    items: list[RepriceResultItem]
+
+
 class CostSheetWithLines(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -292,6 +346,14 @@ class CostSheetWithLines(BaseModel):
     description: str | None = None
     drawing_no: str | None = None
     benchmark_price: Decimal | None = None
+    image_url: str | None = None
+    qty_per_set: Decimal
+    is_optional: bool
+    status: str | None = None
+    remarks: str | None = None
+    first_supply_price: Decimal | None = None
+    first_supply_date: date | None = None
+    first_supply_rm_reference: Decimal | None = None
     client_id: int | None = None
     supply_version: str
     discount_pct: Decimal
@@ -302,6 +364,7 @@ class CostSheetWithLines(BaseModel):
     finishing_ops: list[SheetFinishingOpOut] = []
     process_rows: list[ProcessCostRowOut] = []
     sheet_result: SheetCalcResultOut | None = None
+    price_history: list[PriceHistoryEntryOut] = []
 
 
 # ---------------------------------------------------------------------------
@@ -314,16 +377,44 @@ class CostSheetSummary(BaseModel):
     part_no: str | None
     supply_version: str
     total_price: Decimal | None
+    price_after_discount: Decimal | None = None
+    transport_cost: Decimal = Decimal("0")
     rm_cost: Decimal | None
     bo_grand_total: Decimal | None = None
     process_grand_total: Decimal | None = None
     bal_margin: Decimal | None = None
+    bal_margin_per_kg: Decimal | None = None
     total_weight: Decimal | None
     discount_pct: Decimal | None
     pct_change_vs_previous: Decimal | None
+    first_supply_price: Decimal | None = None
+    first_supply_date: date | None = None
+    latest_pct_change_vs_last_supplied: Decimal | None = None
     saved_at: datetime | None
     line_count: int
     saved_count: int
+
+    # Scope / status
+    qty_per_set: Decimal = Decimal("1")
+    is_optional: bool = False
+    status: str | None = None
+    remarks: str | None = None
+
+    # Set-level rollup (this sheet's total_price/total_weight x qty_per_set x workbook sets_count)
+    set_total_price: Decimal | None = None
+    set_total_weight: Decimal | None = None
+
+    # Customer target comparison
+    benchmark_price: Decimal | None = None
+    price_gap: Decimal | None = None       # price_after_discount - benchmark_price
+    price_gap_pct: Decimal | None = None   # price_gap / benchmark_price * 100
+
+    # Per-kg analytics
+    fabrication_per_kg: Decimal | None = None
+    tack_welding_per_kg: Decimal | None = None
+    full_welding_per_kg: Decimal | None = None
+    machining_per_kg: Decimal | None = None
+    painting_per_kg: Decimal | None = None
 
 
 class WorkbookSummaryOut(BaseModel):
@@ -331,7 +422,18 @@ class WorkbookSummaryOut(BaseModel):
     name: str
     client_id: int
     client_name: str | None = None
+    sets_count: int = 1
     cost_sheets: list[CostSheetSummary]
+
+    # Set-level totals, split standard scope vs optional items
+    standard_total_price: Decimal = Decimal("0")
+    standard_total_weight: Decimal = Decimal("0")
+    optional_total_price: Decimal = Decimal("0")
+    optional_total_weight: Decimal = Decimal("0")
+
+    # Benchmark comparison, standard scope only
+    benchmark_total: Decimal | None = None
+    benchmark_gap_total: Decimal | None = None
 
 
 # ---------------------------------------------------------------------------

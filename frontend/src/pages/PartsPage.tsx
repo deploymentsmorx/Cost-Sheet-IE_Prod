@@ -2,7 +2,7 @@ import { useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { Layers, ChevronRight } from "lucide-react"
+import { Layers, ChevronRight, ImagePlus } from "lucide-react"
 import { partsApi } from "../api/parts"
 import { Button } from "../components/ui/button"
 import { cn } from "../lib/utils"
@@ -80,6 +80,15 @@ export function PartsPage() {
       qc.invalidateQueries({ queryKey: ["sheets", wid] })
       qc.invalidateQueries({ queryKey: ["workbooks"] })
       toast.success("Cost sheet deleted")
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
+
+  const uploadImageMutation = useMutation({
+    mutationFn: ({ id, file }: { id: number; file: File }) => partsApi.uploadImage(id, file),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["sheets", wid] })
+      toast.success("Image uploaded")
     },
     onError: (e: Error) => toast.error(e.message),
   })
@@ -210,6 +219,7 @@ export function PartsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200">
+                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider w-16">Image</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Name</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Part No.</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Drawing No.</th>
@@ -222,6 +232,26 @@ export function PartsPage() {
             <tbody className="divide-y divide-slate-100">
               {sheets.map(s => (
                 <tr key={s.id} className={cn("hover:bg-slate-50/60 transition-colors align-top", editingId === s.id && "bg-sky-50/30")}>
+                  <td className="px-4 py-2.5">
+                    <label className="block w-10 h-10 rounded-md border border-slate-200 bg-slate-50 overflow-hidden cursor-pointer hover:border-primary/50 transition-colors relative group">
+                      {s.image_url ? (
+                        <img src={s.image_url} alt={s.name} className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-slate-300">
+                          <ImagePlus className="w-4 h-4" />
+                        </div>
+                      )}
+                      <input
+                        type="file" accept="image/png,image/jpeg,image/webp,image/gif"
+                        className="hidden"
+                        onChange={e => {
+                          const file = e.target.files?.[0]
+                          if (file) uploadImageMutation.mutate({ id: s.id, file })
+                          e.target.value = ""
+                        }}
+                      />
+                    </label>
+                  </td>
                   {editingId === s.id ? (
                     <>
                       <td className="px-4 py-2.5">

@@ -9,19 +9,30 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.norms import (
+    BoughtOutCatalogItem,
     CostOverheadParam,
+    GradeEquivalence,
     MaterialGrade,
     NormLibrary,
     ProcessRate,
     RmPriceBand,
     ScrapRate,
+    SectionCatalogItem,
+    SteelPriceBuildUp,
 )
 from app.schemas.norms import (
     AddGradeRequest,
     AddOverheadParamRequest,
     AddProcessRateRequest,
+    BoughtOutCatalogItemCreate,
+    BoughtOutCatalogItemOut,
+    BoughtOutCatalogItemUpdate,
     CostOverheadParamOut,
     CreateLibraryRequest,
+    GradeEquivalenceCreate,
+    GradeEquivalenceOut,
+    GradeEquivalenceResolveOut,
+    GradeEquivalenceUpdate,
     MaterialGradeOut,
     NormsLookup,
     NormLibraryDetail,
@@ -31,7 +42,14 @@ from app.schemas.norms import (
     ProcessRatesBulkUpdate,
     RmPriceBandOut,
     RmPricesBulkUpdate,
+    RmPriceTrendPoint,
     ScrapRateOut,
+    SectionCatalogItemCreate,
+    SectionCatalogItemOut,
+    SectionCatalogItemUpdate,
+    SteelPriceBuildUpCreate,
+    SteelPriceBuildUpOut,
+    SteelPriceBuildUpUpdate,
 )
 
 router = APIRouter(prefix="/api/v1/norms", tags=["norms"])
@@ -174,6 +192,22 @@ def _build_detail(library_id: int, db: Session) -> NormLibraryDetail:
         .order_by(CostOverheadParam.applies_to, CostOverheadParam.sort_order)
         .all()
     )
+    steel_buildups = (
+        db.query(SteelPriceBuildUp).filter_by(norm_library_id=library_id)
+        .order_by(SteelPriceBuildUp.grade_id, SteelPriceBuildUp.thickness_band).all()
+    )
+    grade_equivs = (
+        db.query(GradeEquivalence).filter_by(norm_library_id=library_id)
+        .order_by(GradeEquivalence.customer_spec).all()
+    )
+    section_items = (
+        db.query(SectionCatalogItem).filter_by(norm_library_id=library_id)
+        .order_by(SectionCatalogItem.category, SectionCatalogItem.designation).all()
+    )
+    bo_items = (
+        db.query(BoughtOutCatalogItem).filter_by(norm_library_id=library_id)
+        .order_by(BoughtOutCatalogItem.name).all()
+    )
     return NormLibraryDetail(
         library=NormLibrarySummary.model_validate(lib),
         material_grades=[MaterialGradeOut.model_validate(g) for g in grades],
@@ -181,6 +215,10 @@ def _build_detail(library_id: int, db: Session) -> NormLibraryDetail:
         scrap_rate=ScrapRateOut.model_validate(scrap) if scrap else None,
         process_rates=[ProcessRateOut.model_validate(r) for r in process_rates],
         overhead_params=[CostOverheadParamOut.model_validate(o) for o in overhead],
+        steel_price_buildups=[SteelPriceBuildUpOut.model_validate(b) for b in steel_buildups],
+        grade_equivalences=[GradeEquivalenceOut.model_validate(g) for g in grade_equivs],
+        section_catalog_items=[SectionCatalogItemOut.model_validate(s) for s in section_items],
+        bo_catalog_items=[BoughtOutCatalogItemOut.model_validate(b) for b in bo_items],
     )
 
 
@@ -219,6 +257,53 @@ def get_norms_lookup(client_id: int, db: Session = Depends(get_db)):
         process_rates=[ProcessRateOut.model_validate(r) for r in rates],
         overhead_params=[CostOverheadParamOut.model_validate(o) for o in overhead],
     )
+
+
+@router.get("/grade-equivalences/resolve", response_model=GradeEquivalenceResolveOut)
+def resolve_grade_equivalence(client_id: int, spec: str, db: Session = Depends(get_db)):
+    """Auto-resolve a customer spec (e.g. 'S235J2') to its Indian-equivalent grade, via the client's current library."""
+    library = db.query(NormLibrary).filter_by(is_current=True, client_id=client_id).first()
+    if not library:
+        raise HTTPException(status_code=404, detail="No current norm library for this client")
+    match = (
+        db.query(GradeEquivalence)
+        .filter(GradeEquivalence.norm_library_id == library.id, func.lower(GradeEquivalence.customer_spec) == spec.strip().lower())
+        .first()
+    )
+    if not match:
+        raise HTTPException(status_code=404, detail=f"No grade equivalence mapped for spec '{spec}'")
+    grade = db.get(MaterialGrade, match.material_grade_id)
+    return GradeEquivalenceResolveOut(
+        customer_spec=match.customer_spec,
+        material_grade_id=match.material_grade_id,
+        material_grade_name=grade.name if grade else "",
+    )
+
+
+@router.get("/rm-price-trend", response_model=list[RmPriceTrendPoint])
+def rm_price_trend(client_id: int, grade_id: int, thickness_band: str, db: Session = Depends(get_db)):
+    """RM price for one grade+band across every norm library version for this client, oldest first."""
+    libraries = (
+        db.query(NormLibrary)
+        .filter_by(client_id=client_id)
+        .order_by(NormLibrary.effective_date, NormLibrary.created_at)
+        .all()
+    )
+    points: list[RmPriceTrendPoint] = []
+    for lib in libraries:
+        band = db.query(RmPriceBand).filter_by(
+            norm_library_id=lib.id, grade_id=grade_id, thickness_band=thickness_band
+        ).first()
+        if band:
+            points.append(RmPriceTrendPoint(
+                norm_library_id=lib.id,
+                label=lib.label,
+                effective_date=lib.effective_date,
+                is_current=lib.is_current,
+                is_draft=lib.is_draft,
+                price_per_kg=band.price_per_kg,
+            ))
+    return points
 
 
 # ---------------------------------------------------------------------------
@@ -323,6 +408,44 @@ def duplicate_library(library_id: int, db: Session = Depends(get_db)):
             param_value=op.param_value,
         ))
 
+    for sb in db.query(SteelPriceBuildUp).filter_by(norm_library_id=src.id).all():
+        db.add(SteelPriceBuildUp(
+            norm_library_id=new_lib.id,
+            grade_id=sb.grade_id,
+            thickness_band=sb.thickness_band,
+            basic_price_per_tonne=sb.basic_price_per_tonne,
+            ust_amount=sb.ust_amount,
+            trimming_amount=sb.trimming_amount,
+            normalising_amount=sb.normalising_amount,
+            trader_transport_constant=sb.trader_transport_constant,
+        ))
+
+    for ge in db.query(GradeEquivalence).filter_by(norm_library_id=src.id).all():
+        db.add(GradeEquivalence(
+            norm_library_id=new_lib.id,
+            customer_spec=ge.customer_spec,
+            material_grade_id=ge.material_grade_id,
+            notes=ge.notes,
+        ))
+
+    for sc in db.query(SectionCatalogItem).filter_by(norm_library_id=src.id).all():
+        db.add(SectionCatalogItem(
+            norm_library_id=new_lib.id,
+            category=sc.category,
+            designation=sc.designation,
+            kg_per_m=sc.kg_per_m,
+            rate_per_kg=sc.rate_per_kg,
+        ))
+
+    for bo in db.query(BoughtOutCatalogItem).filter_by(norm_library_id=src.id).all():
+        db.add(BoughtOutCatalogItem(
+            norm_library_id=new_lib.id,
+            name=bo.name,
+            category=bo.category,
+            unit_weight_kg=bo.unit_weight_kg,
+            rate=bo.rate,
+        ))
+
     db.commit()
     return _build_detail(new_lib.id, db)
 
@@ -338,6 +461,10 @@ def delete_library(library_id: int, db: Session = Depends(get_db)):
     db.query(ScrapRate).filter_by(norm_library_id=library_id).delete()
     db.query(ProcessRate).filter_by(norm_library_id=library_id).delete()
     db.query(CostOverheadParam).filter_by(norm_library_id=library_id).delete()
+    db.query(SteelPriceBuildUp).filter_by(norm_library_id=library_id).delete()
+    db.query(GradeEquivalence).filter_by(norm_library_id=library_id).delete()
+    db.query(SectionCatalogItem).filter_by(norm_library_id=library_id).delete()
+    db.query(BoughtOutCatalogItem).filter_by(norm_library_id=library_id).delete()
     db.delete(lib)
     db.commit()
 
@@ -541,5 +668,258 @@ def add_overhead_param(library_id: int, body: AddOverheadParamRequest, db: Sessi
         sort_order=max_order + 1,
         param_value=body.param_value,
     ))
+    db.commit()
+    return _build_detail(library_id, db)
+
+
+# ---------------------------------------------------------------------------
+# Steel Price Build-Up
+# ---------------------------------------------------------------------------
+
+@router.post("/libraries/{library_id}/steel-buildups", response_model=NormLibraryDetail, status_code=201)
+def add_steel_buildup(library_id: int, body: SteelPriceBuildUpCreate, db: Session = Depends(get_db)):
+    lib = _get_library_or_404(library_id, db)
+    _assert_editable(lib)
+
+    if not db.get(MaterialGrade, body.grade_id):
+        raise HTTPException(status_code=404, detail=f"Material grade {body.grade_id} not found")
+
+    existing = db.query(SteelPriceBuildUp).filter_by(
+        norm_library_id=library_id, grade_id=body.grade_id, thickness_band=body.thickness_band
+    ).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="A build-up already exists for this grade + thickness band — edit it instead")
+
+    db.add(SteelPriceBuildUp(
+        norm_library_id=library_id,
+        grade_id=body.grade_id,
+        thickness_band=body.thickness_band,
+        basic_price_per_tonne=body.basic_price_per_tonne,
+        ust_amount=body.ust_amount,
+        trimming_amount=body.trimming_amount,
+        normalising_amount=body.normalising_amount,
+        trader_transport_constant=body.trader_transport_constant,
+    ))
+    db.commit()
+    return _build_detail(library_id, db)
+
+
+@router.patch("/libraries/{library_id}/steel-buildups/{buildup_id}", response_model=NormLibraryDetail)
+def update_steel_buildup(library_id: int, buildup_id: int, body: SteelPriceBuildUpUpdate, db: Session = Depends(get_db)):
+    lib = _get_library_or_404(library_id, db)
+    _assert_editable(lib)
+
+    row = db.get(SteelPriceBuildUp, buildup_id)
+    if not row or row.norm_library_id != library_id:
+        raise HTTPException(status_code=404, detail=f"Steel price build-up {buildup_id} not found in library {library_id}")
+
+    for field, value in body.model_dump(exclude_unset=True).items():
+        setattr(row, field, value)
+    row.updated_at = datetime.now(UTC)
+    db.commit()
+    return _build_detail(library_id, db)
+
+
+@router.delete("/libraries/{library_id}/steel-buildups/{buildup_id}", response_model=NormLibraryDetail)
+def delete_steel_buildup(library_id: int, buildup_id: int, db: Session = Depends(get_db)):
+    lib = _get_library_or_404(library_id, db)
+    _assert_editable(lib)
+
+    row = db.get(SteelPriceBuildUp, buildup_id)
+    if not row or row.norm_library_id != library_id:
+        raise HTTPException(status_code=404, detail=f"Steel price build-up {buildup_id} not found in library {library_id}")
+    db.delete(row)
+    db.commit()
+    return _build_detail(library_id, db)
+
+
+@router.post("/libraries/{library_id}/steel-buildups/{buildup_id}/apply-to-rm", response_model=NormLibraryDetail)
+def apply_steel_buildup_to_rm(library_id: int, buildup_id: int, db: Session = Depends(get_db)):
+    """Write this build-up's computed Rs/kg into the matching RM price band."""
+    lib = _get_library_or_404(library_id, db)
+    _assert_editable(lib)
+
+    row = db.get(SteelPriceBuildUp, buildup_id)
+    if not row or row.norm_library_id != library_id:
+        raise HTTPException(status_code=404, detail=f"Steel price build-up {buildup_id} not found in library {library_id}")
+
+    band = db.query(RmPriceBand).filter_by(
+        norm_library_id=library_id, grade_id=row.grade_id, thickness_band=row.thickness_band
+    ).first()
+    if not band:
+        raise HTTPException(status_code=404, detail="No matching RM price band found — add the grade to this library first")
+
+    band.price_per_kg = row.price_per_kg
+    band.updated_at = datetime.now(UTC)
+    db.commit()
+    return _build_detail(library_id, db)
+
+
+# ---------------------------------------------------------------------------
+# Grade Equivalence Mapping
+# ---------------------------------------------------------------------------
+
+@router.post("/libraries/{library_id}/grade-equivalences", response_model=NormLibraryDetail, status_code=201)
+def add_grade_equivalence(library_id: int, body: GradeEquivalenceCreate, db: Session = Depends(get_db)):
+    lib = _get_library_or_404(library_id, db)
+    _assert_editable(lib)
+
+    if not db.get(MaterialGrade, body.material_grade_id):
+        raise HTTPException(status_code=404, detail=f"Material grade {body.material_grade_id} not found")
+
+    existing = db.query(GradeEquivalence).filter(
+        GradeEquivalence.norm_library_id == library_id,
+        func.lower(GradeEquivalence.customer_spec) == body.customer_spec.lower(),
+    ).first()
+    if existing:
+        raise HTTPException(status_code=409, detail=f"Spec '{body.customer_spec}' is already mapped in this library")
+
+    db.add(GradeEquivalence(
+        norm_library_id=library_id,
+        customer_spec=body.customer_spec,
+        material_grade_id=body.material_grade_id,
+        notes=body.notes,
+    ))
+    db.commit()
+    return _build_detail(library_id, db)
+
+
+@router.patch("/libraries/{library_id}/grade-equivalences/{equiv_id}", response_model=NormLibraryDetail)
+def update_grade_equivalence(library_id: int, equiv_id: int, body: GradeEquivalenceUpdate, db: Session = Depends(get_db)):
+    lib = _get_library_or_404(library_id, db)
+    _assert_editable(lib)
+
+    row = db.get(GradeEquivalence, equiv_id)
+    if not row or row.norm_library_id != library_id:
+        raise HTTPException(status_code=404, detail=f"Grade equivalence {equiv_id} not found in library {library_id}")
+
+    for field, value in body.model_dump(exclude_unset=True).items():
+        setattr(row, field, value)
+    row.updated_at = datetime.now(UTC)
+    db.commit()
+    return _build_detail(library_id, db)
+
+
+@router.delete("/libraries/{library_id}/grade-equivalences/{equiv_id}", response_model=NormLibraryDetail)
+def delete_grade_equivalence(library_id: int, equiv_id: int, db: Session = Depends(get_db)):
+    lib = _get_library_or_404(library_id, db)
+    _assert_editable(lib)
+
+    row = db.get(GradeEquivalence, equiv_id)
+    if not row or row.norm_library_id != library_id:
+        raise HTTPException(status_code=404, detail=f"Grade equivalence {equiv_id} not found in library {library_id}")
+    db.delete(row)
+    db.commit()
+    return _build_detail(library_id, db)
+
+
+# ---------------------------------------------------------------------------
+# Section / Bar / Tube Catalogue
+# ---------------------------------------------------------------------------
+
+@router.post("/libraries/{library_id}/section-catalog", response_model=NormLibraryDetail, status_code=201)
+def add_section_catalog_item(library_id: int, body: SectionCatalogItemCreate, db: Session = Depends(get_db)):
+    lib = _get_library_or_404(library_id, db)
+    _assert_editable(lib)
+
+    existing = db.query(SectionCatalogItem).filter(
+        SectionCatalogItem.norm_library_id == library_id,
+        func.lower(SectionCatalogItem.designation) == body.designation.lower(),
+    ).first()
+    if existing:
+        raise HTTPException(status_code=409, detail=f"Designation '{body.designation}' already exists in this library")
+
+    db.add(SectionCatalogItem(
+        norm_library_id=library_id,
+        category=body.category,
+        designation=body.designation,
+        kg_per_m=body.kg_per_m,
+        rate_per_kg=body.rate_per_kg,
+    ))
+    db.commit()
+    return _build_detail(library_id, db)
+
+
+@router.patch("/libraries/{library_id}/section-catalog/{item_id}", response_model=NormLibraryDetail)
+def update_section_catalog_item(library_id: int, item_id: int, body: SectionCatalogItemUpdate, db: Session = Depends(get_db)):
+    lib = _get_library_or_404(library_id, db)
+    _assert_editable(lib)
+
+    row = db.get(SectionCatalogItem, item_id)
+    if not row or row.norm_library_id != library_id:
+        raise HTTPException(status_code=404, detail=f"Section catalog item {item_id} not found in library {library_id}")
+
+    for field, value in body.model_dump(exclude_unset=True).items():
+        setattr(row, field, value)
+    row.updated_at = datetime.now(UTC)
+    db.commit()
+    return _build_detail(library_id, db)
+
+
+@router.delete("/libraries/{library_id}/section-catalog/{item_id}", response_model=NormLibraryDetail)
+def delete_section_catalog_item(library_id: int, item_id: int, db: Session = Depends(get_db)):
+    lib = _get_library_or_404(library_id, db)
+    _assert_editable(lib)
+
+    row = db.get(SectionCatalogItem, item_id)
+    if not row or row.norm_library_id != library_id:
+        raise HTTPException(status_code=404, detail=f"Section catalog item {item_id} not found in library {library_id}")
+    db.delete(row)
+    db.commit()
+    return _build_detail(library_id, db)
+
+
+# ---------------------------------------------------------------------------
+# Bought-Out Item Master
+# ---------------------------------------------------------------------------
+
+@router.post("/libraries/{library_id}/bo-catalog", response_model=NormLibraryDetail, status_code=201)
+def add_bo_catalog_item(library_id: int, body: BoughtOutCatalogItemCreate, db: Session = Depends(get_db)):
+    lib = _get_library_or_404(library_id, db)
+    _assert_editable(lib)
+
+    existing = db.query(BoughtOutCatalogItem).filter(
+        BoughtOutCatalogItem.norm_library_id == library_id,
+        func.lower(BoughtOutCatalogItem.name) == body.name.lower(),
+    ).first()
+    if existing:
+        raise HTTPException(status_code=409, detail=f"Item '{body.name}' already exists in this library")
+
+    db.add(BoughtOutCatalogItem(
+        norm_library_id=library_id,
+        name=body.name,
+        category=body.category,
+        unit_weight_kg=body.unit_weight_kg,
+        rate=body.rate,
+    ))
+    db.commit()
+    return _build_detail(library_id, db)
+
+
+@router.patch("/libraries/{library_id}/bo-catalog/{item_id}", response_model=NormLibraryDetail)
+def update_bo_catalog_item(library_id: int, item_id: int, body: BoughtOutCatalogItemUpdate, db: Session = Depends(get_db)):
+    lib = _get_library_or_404(library_id, db)
+    _assert_editable(lib)
+
+    row = db.get(BoughtOutCatalogItem, item_id)
+    if not row or row.norm_library_id != library_id:
+        raise HTTPException(status_code=404, detail=f"Bought-out catalog item {item_id} not found in library {library_id}")
+
+    for field, value in body.model_dump(exclude_unset=True).items():
+        setattr(row, field, value)
+    row.updated_at = datetime.now(UTC)
+    db.commit()
+    return _build_detail(library_id, db)
+
+
+@router.delete("/libraries/{library_id}/bo-catalog/{item_id}", response_model=NormLibraryDetail)
+def delete_bo_catalog_item(library_id: int, item_id: int, db: Session = Depends(get_db)):
+    lib = _get_library_or_404(library_id, db)
+    _assert_editable(lib)
+
+    row = db.get(BoughtOutCatalogItem, item_id)
+    if not row or row.norm_library_id != library_id:
+        raise HTTPException(status_code=404, detail=f"Bought-out catalog item {item_id} not found in library {library_id}")
+    db.delete(row)
     db.commit()
     return _build_detail(library_id, db)

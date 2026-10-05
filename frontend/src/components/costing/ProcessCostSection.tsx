@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { partsApi } from "../../api/parts"
 import { Button } from "../ui/button"
-import { cn } from "../../lib/utils"
+import { cn, compareLevelNo, levelDepth } from "../../lib/utils"
 import type { CostingLine, CostingSheetWithLines } from "../../types/parts"
 import type { NormsLookup, ProcessRate } from "../../types/norms"
 
@@ -55,6 +55,17 @@ function n(v: string | number | undefined | null, dp = 2) {
   return Number(v).toLocaleString("en-IN", { minimumFractionDigits: dp, maximumFractionDigits: dp })
 }
 
+/** Parses a cut-length expression like "8022+60+60" into a total; null if invalid. */
+function parseLengthExpr(raw: string): number | null {
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+  const parts = trimmed.split("+").map(s => s.trim())
+  if (parts.some(p => p === "")) return null
+  const nums = parts.map(Number)
+  if (nums.some(x => isNaN(x) || x < 0)) return null
+  return nums.reduce((a, b) => a + b, 0)
+}
+
 function getFields(unit: string): { key: string; label: string }[] {
   if (unit === "Rs/mm/meter")    return [{ key: "length_mm",      label: "Cut Length (mm)" }]
   if (unit === "Rs/slant/meter") return [
@@ -95,8 +106,10 @@ function formulaLines(
   const r = (v: number) => v.toLocaleString("en-IN", { maximumFractionDigits: 4 })
   if (unit === "Rs/mm/meter") {
     const len = Number(inputData.length_mm ?? 0)
+    const expr = inputData.length_mm_expr ? String(inputData.length_mm_expr) : null
     return [
       `Formula: (cut_length ÷ 1000) × thickness × qty × rate`,
+      ...(expr && expr !== String(len) ? [`cut_length = ${expr} = ${r(len)} mm`] : []),
       `= (${r(len)} ÷ 1000) × ${r(thicknessMm)} mm × ${r(qty)} × ₹${r(rate)}/mm/m`,
       `= ₹${r(cost)}`,
     ]
@@ -175,6 +188,7 @@ function OpForm({
   submitting: boolean
 }) {
   const [form, setForm] = useState<OpFormState>(initial ?? { group: "", opName: "", inputs: {} })
+  const [paintCalc, setPaintCalc] = useState({ area_mm2: "", num_sides: "1" })
   const ic = "border border-slate-200 rounded-md px-2.5 py-1.5 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-primary/30"
 
   const ratesInGroup: ProcessRate[] = normsLookup.process_rates.filter(pr => {
@@ -192,7 +206,13 @@ function OpForm({
     : Number(line.part_weight) * Number(line.qty)
   const thicknessMm = Number(line.thickness_mm ?? 0)
   const qty = Number(line.qty)
-  const preview = selectedRate ? previewCost(unit, form.inputs, rate, thicknessMm, qty, totalWt) : 0
+  // Resolve the length_mm expression (e.g. "8022+60+60") to a number for live preview
+  const resolvedInputs = { ...form.inputs }
+  const lengthExprValid = fields.some(f => f.key === "length_mm") ? parseLengthExpr(form.inputs.length_mm ?? "") : null
+  if (fields.some(f => f.key === "length_mm")) {
+    resolvedInputs.length_mm = lengthExprValid != null ? String(lengthExprValid) : "0"
+  }
+  const preview = selectedRate ? previewCost(unit, resolvedInputs, rate, thicknessMm, qty, totalWt) : 0
   const needsThickness = unit === "Rs/mm/meter" || unit === "Rs/slant/meter"
   const missingThickness = needsThickness && thicknessMm === 0
 
@@ -209,6 +229,16 @@ function OpForm({
     const inputData: Record<string, unknown> = {}
     for (const f of fields) {
       const raw = form.inputs[f.key]
+      if (f.key === "length_mm") {
+        const parsed = parseLengthExpr(raw ?? "")
+        if (parsed == null || parsed <= 0) {
+          toast.error(`${f.label} must be a positive number, or a sum like "8022+60+60"`)
+          return
+        }
+        inputData.length_mm = parsed
+        inputData.length_mm_expr = (raw ?? "").trim()
+        continue
+      }
       const num = Number(raw)
       if (!raw || isNaN(num) || num <= 0) {
         toast.error(`${f.label} must be a positive number`)
@@ -243,7 +273,22 @@ function OpForm({
         </div>
       )}
 
-      {fields.map(f => (
+      {fields.map(f => f.key === "length_mm" ? (
+        <div key={f.key}>
+          <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-1 block">{f.label}</label>
+          <input
+            type="text" placeholder="e.g. 8022+60+60"
+            value={form.inputs.length_mm ?? ""}
+            onChange={e => setForm(p => ({ ...p, inputs: { ...p.inputs, length_mm: e.target.value } }))}
+            className={cn(ic, "w-36")}
+          />
+          {form.inputs.length_mm && (
+            <p className={cn("text-[10px] mt-0.5", lengthExprValid != null ? "text-slate-400" : "text-red-500")}>
+              {lengthExprValid != null ? `= ${lengthExprValid.toLocaleString("en-IN")} mm` : "invalid — use numbers joined by +"}
+            </p>
+          )}
+        </div>
+      ) : (
         <div key={f.key}>
           <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-1 block">{f.label}</label>
           <input
@@ -254,6 +299,42 @@ function OpForm({
           />
         </div>
       ))}
+
+      {unit === "Rs/Sqm" && (
+        <div className="w-full flex items-end gap-2 mt-1 pt-2 border-t border-sky-200/40">
+          <span className="text-[10px] text-slate-400 italic pb-2">Paint area calc:</span>
+          <div>
+            <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-1 block">Surface Area (mm²)</label>
+            <input
+              type="number" min="0" step="any"
+              value={paintCalc.area_mm2}
+              onChange={e => {
+                const area_mm2 = e.target.value
+                setPaintCalc(p => ({ ...p, area_mm2 }))
+                const sqm = (Number(area_mm2) || 0) * (Number(paintCalc.num_sides) || 1) / 1_000_000
+                setForm(p => ({ ...p, inputs: { ...p.inputs, input_qty: String(sqm) } }))
+              }}
+              className={cn(ic, "w-28")}
+            />
+          </div>
+          <span className="text-slate-400 text-xs pb-2">×</span>
+          <div>
+            <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-1 block">Sides</label>
+            <input
+              type="number" min="1" step="1"
+              value={paintCalc.num_sides}
+              onChange={e => {
+                const num_sides = e.target.value
+                setPaintCalc(p => ({ ...p, num_sides }))
+                const sqm = (Number(paintCalc.area_mm2) || 0) * (Number(num_sides) || 1) / 1_000_000
+                setForm(p => ({ ...p, inputs: { ...p.inputs, input_qty: String(sqm) } }))
+              }}
+              className={cn(ic, "w-16")}
+            />
+          </div>
+          <span className="text-slate-400 text-xs pb-2">→ fills Area (Sqm) above</span>
+        </div>
+      )}
 
       {unit === "Rs/Kg" && form.opName && (
         <div>
@@ -350,7 +431,11 @@ function LineRows({
 
   function makeInitialEdit(op: typeof line.operations[0]): OpFormState {
     const inputs: Record<string, string> = {}
-    for (const [k, v] of Object.entries(op.input_data)) inputs[k] = String(v)
+    for (const [k, v] of Object.entries(op.input_data)) {
+      if (k === "length_mm_expr") continue
+      inputs[k] = String(v)
+    }
+    if (op.input_data.length_mm_expr) inputs.length_mm = String(op.input_data.length_mm_expr)
     return { group: OP_GROUP[op.operation_type] ?? "Others", opName: op.operation_type, inputs }
   }
 
@@ -366,10 +451,14 @@ function LineRows({
       <tr className="bg-slate-50 border-y border-slate-200 align-middle">
         {/* Sl */}
         <td className="px-3 py-2.5 font-mono text-slate-500 font-bold text-[11px]">
-          {line.sl_no}
+          {line.level_no ?? line.sl_no}
         </td>
         {/* Description */}
-        <td className="px-3 py-2.5 font-semibold text-slate-900 text-xs max-w-[160px] truncate">
+        <td
+          className="px-3 py-2.5 font-semibold text-slate-900 text-xs max-w-[160px] truncate"
+          style={{ paddingLeft: `${12 + levelDepth(line.level_no) * 16}px` }}
+        >
+          {levelDepth(line.level_no) > 0 && <span className="text-slate-300 mr-1">↳</span>}
           {line.description ?? "—"}
         </td>
         {/* Spec */}
@@ -434,7 +523,10 @@ function LineRows({
           : [`Cost: ₹${cost}`]
         const inputSummary = unit === "Rs/Kg"
           ? `${n(totalWt, 3)} kg (auto)`
-          : Object.entries(op.input_data).map(([k, v]) => `${k}: ${v}`).join(" · ") || "—"
+          : Object.entries(op.input_data)
+              .filter(([k]) => k !== "length_mm_expr")
+              .map(([k, v]) => k === "length_mm" && op.input_data.length_mm_expr ? `${k}: ${op.input_data.length_mm_expr}` : `${k}: ${v}`)
+              .join(" · ") || "—"
 
         return (
           <Fragment key={op.id}>
@@ -579,6 +671,9 @@ export function ProcessCostSection({
   }
 
   const totalProcessCost = sheet.lines.reduce((s, ln) => s + Number(ln.line_process_cost ?? 0), 0)
+  const sortedLines = [...sheet.lines].sort((a, b) =>
+    compareLevelNo(a.level_no ?? String(a.sl_no), b.level_no ?? String(b.sl_no))
+  )
 
   return (
     <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-x-auto">
@@ -597,7 +692,7 @@ export function ProcessCostSection({
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
-          {sheet.lines.map(line => (
+          {sortedLines.map(line => (
             <LineRows
               key={line.id}
               line={line}

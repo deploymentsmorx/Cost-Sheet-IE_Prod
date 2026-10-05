@@ -3,7 +3,9 @@ import type {
   CostingLine,
   CostSheetWithLines,
   LineOperation,
+  PriceHistoryEntry,
   ProcessCostRow,
+  RepriceResponse,
   SheetFinishingOp,
   Workbook,
   WorkbookSummaryOut,
@@ -30,9 +32,9 @@ export const partsApi = {
     request<Workbook[]>(clientId != null ? `/workbooks?client_id=${clientId}` : "/workbooks"),
   getSummary: (workbookId: number) =>
     request<WorkbookSummaryOut>(`/workbooks/${workbookId}/summary`),
-  createWorkbook: (body: { name: string; client_id: number; description?: string }) =>
+  createWorkbook: (body: { name: string; client_id: number; description?: string; sets_count?: number }) =>
     request<Workbook>("/workbooks", { method: "POST", body: JSON.stringify(body) }),
-  updateWorkbook: (id: number, body: Partial<{ name: string; client_id: number; description: string }>) =>
+  updateWorkbook: (id: number, body: Partial<{ name: string; client_id: number; description: string; sets_count: number }>) =>
     request<Workbook>(`/workbooks/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   deleteWorkbook: (id: number) =>
     request<void>(`/workbooks/${id}`, { method: "DELETE" }),
@@ -46,6 +48,11 @@ export const partsApi = {
     description?: string
     drawing_no?: string
     benchmark_price?: string
+    image_url?: string
+    qty_per_set?: string
+    is_optional?: boolean
+    status?: string
+    remarks?: string
     supply_version?: string
     discount_pct?: string
     transport_cost?: string
@@ -61,6 +68,11 @@ export const partsApi = {
     description: string | null
     drawing_no: string | null
     benchmark_price: string | null
+    image_url: string | null
+    qty_per_set: string
+    is_optional: boolean
+    status: string | null
+    remarks: string | null
     supply_version: string
     discount_pct: string
     transport_cost: string
@@ -70,11 +82,25 @@ export const partsApi = {
     request<CostSheetWithLines>(`/sheets/${sheetId}/save-results`, { method: "POST" }),
   deleteSheet: (sheetId: number) =>
     request<void>(`/sheets/${sheetId}`, { method: "DELETE" }),
+  getPriceHistory: (sheetId: number) =>
+    request<PriceHistoryEntry[]>(`/sheets/${sheetId}/price-history`),
+  repriceWorkbook: (workbookId: number) =>
+    request<RepriceResponse>(`/workbooks/${workbookId}/reprice`, { method: "POST" }),
+  uploadImage: async (sheetId: number, file: File) => {
+    const form = new FormData()
+    form.append("file", file)
+    const res = await fetch(`${BASE}/sheets/${sheetId}/image`, { method: "POST", body: form })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }))
+      throw new Error(err.detail ?? "Upload failed")
+    }
+    return res.json() as Promise<CostSheetWithLines>
+  },
 
   // RM Lines
-  addLine: (sheetId: number, body: object) =>
+  addLine: (sheetId: number, body: object & { parent_line_id?: number | null }) =>
     request<CostingLine>(`/sheets/${sheetId}/lines`, { method: "POST", body: JSON.stringify(body) }),
-  updateLine: (sheetId: number, lineId: number, body: object) =>
+  updateLine: (sheetId: number, lineId: number, body: object & { parent_line_id?: number | null }) =>
     request<CostingLine>(`/sheets/${sheetId}/lines/${lineId}`, { method: "PATCH", body: JSON.stringify(body) }),
   deleteLine: (sheetId: number, lineId: number) =>
     request<void>(`/sheets/${sheetId}/lines/${lineId}`, { method: "DELETE" }),

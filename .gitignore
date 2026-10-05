@@ -23,3 +23,10 @@ backend/alembic/versions/__pycache__/
 # OS
 .DS_Store
 Thumbs.db
+
+# Trial/reference data (not source, may contain real customer data)
+*.xlsx
+*.xls
+
+# Runtime-uploaded files
+backend/static/

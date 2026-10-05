@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-from datetime import datetime, timezone
+import os
+import uuid
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -34,6 +36,7 @@ from app.models.parts import (
     CostSheetResult,
     CostWorkbook,
     LineOperation,
+    PriceHistoryEntry,
     ProcessCostRow as ProcessCostRowModel,
     SheetFinishingOp,
 )
@@ -54,8 +57,11 @@ from app.schemas.parts import (
     LineOperationCreate,
     LineOperationOut,
     LineOperationUpdate,
+    PriceHistoryEntryOut,
     ProcessCostRowOut,
     ProcessCostRowUpdate,
+    RepriceResponse,
+    RepriceResultItem,
     RmLineResultOut,
     SheetCalcResultOut,
     BlockMarkupOut,
@@ -69,6 +75,10 @@ from app.schemas.parts import (
 )
 
 router = APIRouter(prefix="/api/v1", tags=["workbooks"])
+
+_BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+UPLOAD_DIR = os.path.join(_BACKEND_DIR, "static", "uploads")
+_ALLOWED_IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 
 
 def _clear_sheet_result(cost_sheet_id: int, db: Session) -> None:
@@ -91,8 +101,219 @@ def _line_client_id(line: CostingLine) -> int | None:
 
 
 # ---------------------------------------------------------------------------
+# Per-kg analytics categories (operation_name/operation_type -> bucket)
+# ---------------------------------------------------------------------------
+
+_PER_KG_CATEGORIES: dict[str, set[str]] = {
+    "tack_welding": {"tack welding"},
+    "full_welding": {"full welding (solid wire)"},
+    "machining":    {"machining (vtl)"},
+    "painting":     {"final painting (primer + final coat)"},
+    "fabrication":  {
+        "dressing", "sandering", "gauging", "preheating / heat correction",
+        "straightening", "hard facing charges", "hard facing", "stud welding",
+    },
+}
+
+
+def _per_kg_breakdown(sheet: CostSheet) -> dict[str, Decimal]:
+    """Sums operation/finishing-op costs into fabrication/tack-weld/full-weld/machining/painting buckets."""
+    totals: dict[str, Decimal] = {k: Decimal("0") for k in _PER_KG_CATEGORIES}
+
+    def add(name: str | None, cost: Decimal | None) -> None:
+        key = (name or "").strip().lower()
+        for cat, names in _PER_KG_CATEGORIES.items():
+            if key in names:
+                totals[cat] += cost or Decimal("0")
+                return
+
+    for line in sheet.lines:
+        for op in line.operations:
+            add(op.operation_type, op.operation_cost)
+    for fop in sheet.finishing_ops:
+        add(fop.operation_name, fop.computed_cost)
+    return totals
+
+
+# ---------------------------------------------------------------------------
+# Price history & repricing
+# ---------------------------------------------------------------------------
+
+def _persist_sheet_calc(
+    sheet: CostSheet,
+    calc: SheetCalcResult,
+    norms: NormsSnapshot,
+    db: Session,
+    now: datetime,
+    pct_change_vs_previous: Decimal | None = None,
+) -> None:
+    """Upserts CostingResult (per line) + CostSheetResult (sheet) and recomputes live operation/finishing costs.
+    Shared by save_sheet_results and reprice_workbook so both stay in sync."""
+    for i, (line, rm_r) in enumerate(zip(sheet.lines, calc.line_rm_results)):
+        pc = calc.line_process_costs[i]
+        existing = db.query(CostingResult).filter_by(costing_line_id=line.id).first()
+        vals = dict(
+            norm_library_id=rm_r.norm_library_id,
+            calculated_at=now,
+            total_part_weight=rm_r.total_part_weight,
+            blank_weight=rm_r.blank_weight,
+            total_blank_weight=rm_r.total_blank_weight,
+            blank_rate=rm_r.blank_rate,
+            blank_cost=rm_r.blank_cost,
+            process_loss_pct=rm_r.process_loss_pct,
+            process_loss_weight=rm_r.process_loss_weight,
+            scrap_weight=rm_r.scrap_weight,
+            scrap_cost=rm_r.scrap_cost,
+            rm_cost=rm_r.rm_cost,
+            line_process_cost=pc,
+        )
+        if existing:
+            for k, v in vals.items():
+                setattr(existing, k, v)
+        else:
+            db.add(CostingResult(costing_line_id=line.id, **vals))
+
+    sheet_vals = dict(
+        norm_library_id=calc.norm_library_id,
+        calculated_at=now,
+        total_rm_cost=calc.total_rm_cost,
+        overhead_rm=calc.rm_block.overhead,
+        rework_rm=calc.rm_block.rework,
+        inventory_rm=calc.rm_block.inventory,
+        profit_rm=calc.rm_block.profit,
+        rm_grand_total=calc.rm_block.grand_total,
+        total_bo_cost=calc.total_bo_cost,
+        overhead_bo=calc.bo_block.overhead,
+        inventory_bo=calc.bo_block.inventory,
+        profit_bo=calc.bo_block.profit,
+        bo_grand_total=calc.bo_block.grand_total,
+        total_process_cost=calc.total_process_cost,
+        overhead_proc=calc.process_block.overhead,
+        rework_proc=calc.process_block.rework,
+        profit_proc=calc.process_block.profit,
+        process_grand_total=calc.process_block.grand_total,
+        unit_price=calc.unit_price,
+        transport_cost_snap=calc.transport_cost,
+        discount_pct_snap=calc.discount_pct,
+        price_after_discount=calc.price_after_discount,
+        pct_change_vs_previous=pct_change_vs_previous,
+        bal_margin=calc.bal_margin,
+        bal_margin_per_kg=calc.bal_margin_per_kg,
+        total_part_weight=calc.total_part_weight,
+    )
+    existing_result = db.query(CostSheetResult).filter_by(cost_sheet_id=sheet.id).first()
+    if existing_result:
+        for k, v in sheet_vals.items():
+            setattr(existing_result, k, v)
+    else:
+        db.add(CostSheetResult(cost_sheet_id=sheet.id, **sheet_vals))
+
+    for line in sheet.lines:
+        inp = CostingLineInput(
+            grade_id=line.grade_id or 0,
+            thickness_band=line.thickness_band or "",
+            part_weight=line.part_weight,
+            qty=line.qty,
+            efficiency_pct=line.efficiency_pct,
+            thickness_mm=line.thickness_mm or Decimal("0"),
+        )
+        from app.calc_engine import _operation_cost as _op_cost
+        for op in line.operations:
+            op_inp = LineOperationInput(op.operation_type, op.input_data)
+            try:
+                op.operation_cost = _op_cost(op_inp, inp, norms)
+            except Exception:
+                op.operation_cost = Decimal("0")
+
+    for fop in sheet.finishing_ops:
+        from app.calc_engine import _ZERO
+        rate = norms.process_rates.get(fop.operation_name, _ZERO)
+        fop.computed_cost = fop.input_qty * rate
+
+
+def _resolve_rm_reference_price(sheet: CostSheet, norms: NormsSnapshot) -> Decimal | None:
+    """RM reference index for this sheet: its first line's grade, priced at the 20mm band."""
+    first_line = sheet.lines[0] if sheet.lines else None
+    if not first_line or not first_line.grade_id:
+        return None
+    return norms.rm_prices.get((first_line.grade_id, "20mm"))
+
+
+def _record_price_history(sheet: CostSheet, calc: SheetCalcResult, norms: NormsSnapshot, db: Session) -> None:
+    """Appends a 'Change N' entry when the price differs from the last recorded one; freezes first-supply on entry 1."""
+    last = (
+        db.query(PriceHistoryEntry)
+        .filter_by(cost_sheet_id=sheet.id)
+        .order_by(PriceHistoryEntry.change_no.desc())
+        .first()
+    )
+    new_price = calc.price_after_discount
+    if last is not None and last.price == new_price:
+        return  # no-op save — don't log a duplicate entry
+
+    rm_ref = _resolve_rm_reference_price(sheet, norms)
+    pct_change = None
+    if last is not None and last.price != 0:
+        pct_change = (new_price - last.price) / last.price * Decimal("100")
+
+    entry = PriceHistoryEntry(
+        cost_sheet_id=sheet.id,
+        change_no=(last.change_no + 1) if last else 1,
+        price=new_price,
+        rm_reference_price=rm_ref,
+        discount_pct=calc.discount_pct,
+        pct_change_vs_last_supplied=pct_change,
+    )
+    db.add(entry)
+
+    if last is None:
+        sheet.first_supply_price = new_price
+        sheet.first_supply_date = date.today()
+        sheet.first_supply_rm_reference = rm_ref
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _compute_level_numbers(lines: list[CostingLine]) -> dict[int, str]:
+    """Hierarchical BOM numbering (1, 1.1, 1.2, 2, ...) from parent_line_id + sibling sl_no order."""
+    children_map: dict[int | None, list[CostingLine]] = {}
+    for ln in lines:
+        children_map.setdefault(ln.parent_line_id, []).append(ln)
+    for siblings in children_map.values():
+        siblings.sort(key=lambda l: l.sl_no)
+
+    result: dict[int, str] = {}
+
+    def walk(parent_id: int | None, prefix: str) -> None:
+        for idx, ln in enumerate(children_map.get(parent_id, []), start=1):
+            label = str(idx) if not prefix else f"{prefix}.{idx}"
+            result[ln.id] = label
+            walk(ln.id, label)
+
+    walk(None, "")
+    return result
+
+
+def _validate_parent_line(parent_line_id: int | None, sheet_id: int, db: Session, self_id: int | None = None) -> None:
+    if parent_line_id is None:
+        return
+    if parent_line_id == self_id:
+        raise HTTPException(status_code=422, detail="A line cannot be its own parent")
+    parent = db.get(CostingLine, parent_line_id)
+    if not parent or parent.cost_sheet_id != sheet_id:
+        raise HTTPException(status_code=404, detail=f"Parent line {parent_line_id} not found in this sheet")
+    if self_id is not None:
+        # Walk up from the proposed parent — if we hit self_id, this would create a cycle
+        cur: CostingLine | None = parent
+        seen: set[int] = set()
+        while cur is not None and cur.id not in seen:
+            if cur.id == self_id:
+                raise HTTPException(status_code=422, detail="Cannot set parent — would create a circular sub-assembly")
+            seen.add(cur.id)
+            cur = cur.parent
+
 
 def _run_rm_calc(line: CostingLine, norms: NormsSnapshot | None) -> RmLineResultOut | None:
     if norms is None or line.grade_id is None or not line.thickness_band:
@@ -113,8 +334,9 @@ def _run_rm_calc(line: CostingLine, norms: NormsSnapshot | None) -> RmLineResult
         return None
 
 
-def _line_out(line: CostingLine, norms: NormsSnapshot | None) -> CostingLineOut:
+def _line_out(line: CostingLine, norms: NormsSnapshot | None, levels: dict[int, str] | None = None) -> CostingLineOut:
     out = CostingLineOut.model_validate(line)
+    out.level_no = levels.get(line.id) if levels else None
     out.rm_result = _run_rm_calc(line, norms)
     if norms and line.grade_id and line.thickness_band:
         inp = CostingLineInput(
@@ -289,7 +511,8 @@ def _sheet_out(sheet: CostSheet, db: Session, norms: NormsSnapshot | None = None
             norms = None  # no published norm library yet — return sheet without calculations
     out = CostSheetWithLines.model_validate(sheet)
     out.client_id = client_id
-    out.lines = [_line_out(ln, norms) for ln in sheet.lines]
+    levels = _compute_level_numbers(sheet.lines)
+    out.lines = [_line_out(ln, norms, levels) for ln in sheet.lines]
     out.process_rows = [
         _process_row_out(ln.process_cost_row, ln, norms)
         for ln in sheet.lines
@@ -346,24 +569,83 @@ def get_workbook_summary(workbook_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Workbook not found")
 
     sheet_summaries: list[CostSheetSummary] = []
+    standard_total_price = Decimal("0")
+    standard_total_weight = Decimal("0")
+    optional_total_price = Decimal("0")
+    optional_total_weight = Decimal("0")
+    benchmark_total = Decimal("0")
+    have_benchmark = False
+
     for sheet in sorted(wb.cost_sheets, key=lambda s: s.created_at):
         saved = sheet.saved_result
+        weight = saved.total_part_weight if saved else None
+        price_after_discount = saved.price_after_discount if saved else None
+
+        per_kg = _per_kg_breakdown(sheet)
+        def pk(cat: str) -> Decimal | None:
+            if not weight or weight == 0:
+                return None
+            return per_kg[cat] / weight
+
+        set_multiplier = sheet.qty_per_set * wb.sets_count
+        set_total_price = (price_after_discount * set_multiplier) if price_after_discount is not None else None
+        set_total_weight = (weight * set_multiplier) if weight is not None else None
+
+        price_gap = None
+        price_gap_pct = None
+        if sheet.benchmark_price is not None and price_after_discount is not None:
+            price_gap = price_after_discount - sheet.benchmark_price
+            if sheet.benchmark_price != 0:
+                price_gap_pct = (price_gap / sheet.benchmark_price) * Decimal("100")
+
+        if sheet.is_optional:
+            optional_total_price += set_total_price or Decimal("0")
+            optional_total_weight += set_total_weight or Decimal("0")
+        else:
+            standard_total_price += set_total_price or Decimal("0")
+            standard_total_weight += set_total_weight or Decimal("0")
+            if sheet.benchmark_price is not None:
+                have_benchmark = True
+                benchmark_total += sheet.benchmark_price * set_multiplier
+
         sheet_summaries.append(CostSheetSummary(
             sheet_id=sheet.id,
             name=sheet.name,
             part_no=sheet.part_no,
             supply_version=sheet.supply_version,
             total_price=saved.unit_price if saved else None,
+            price_after_discount=price_after_discount,
+            transport_cost=sheet.transport_cost,
             rm_cost=saved.rm_grand_total if saved else None,
             bo_grand_total=saved.bo_grand_total if saved else None,
             process_grand_total=saved.process_grand_total if saved else None,
             bal_margin=saved.bal_margin if saved else None,
-            total_weight=saved.total_part_weight if saved else None,
+            bal_margin_per_kg=saved.bal_margin_per_kg if saved else None,
+            total_weight=weight,
             discount_pct=saved.discount_pct_snap if saved else None,
             pct_change_vs_previous=saved.pct_change_vs_previous if saved else None,
+            first_supply_price=sheet.first_supply_price,
+            first_supply_date=sheet.first_supply_date,
+            latest_pct_change_vs_last_supplied=(
+                sheet.price_history[-1].pct_change_vs_last_supplied if sheet.price_history else None
+            ),
             saved_at=saved.calculated_at if saved else None,
             line_count=len(sheet.lines),
             saved_count=1 if saved else 0,
+            qty_per_set=sheet.qty_per_set,
+            is_optional=sheet.is_optional,
+            status=sheet.status,
+            remarks=sheet.remarks,
+            set_total_price=set_total_price,
+            set_total_weight=set_total_weight,
+            benchmark_price=sheet.benchmark_price,
+            price_gap=price_gap,
+            price_gap_pct=price_gap_pct,
+            fabrication_per_kg=pk("fabrication"),
+            tack_welding_per_kg=pk("tack_welding"),
+            full_welding_per_kg=pk("full_welding"),
+            machining_per_kg=pk("machining"),
+            painting_per_kg=pk("painting"),
         ))
 
     return WorkbookSummaryOut(
@@ -371,7 +653,14 @@ def get_workbook_summary(workbook_id: int, db: Session = Depends(get_db)):
         name=wb.name,
         client_id=wb.client_id,
         client_name=wb.client.name if wb.client else None,
+        sets_count=wb.sets_count,
         cost_sheets=sheet_summaries,
+        standard_total_price=standard_total_price,
+        standard_total_weight=standard_total_weight,
+        optional_total_price=optional_total_price,
+        optional_total_weight=optional_total_weight,
+        benchmark_total=benchmark_total if have_benchmark else None,
+        benchmark_gap_total=(standard_total_price - benchmark_total) if have_benchmark else None,
     )
 
 
@@ -454,6 +743,28 @@ def delete_sheet(sheet_id: int, db: Session = Depends(get_db)):
     db.commit()
 
 
+@router.post("/sheets/{sheet_id}/image", response_model=CostSheetWithLines)
+def upload_sheet_image(sheet_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    sheet = db.get(CostSheet, sheet_id)
+    if not sheet:
+        raise HTTPException(status_code=404, detail="Cost sheet not found")
+
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in _ALLOWED_IMAGE_EXT:
+        raise HTTPException(status_code=422, detail=f"Unsupported image type '{ext}'. Allowed: {sorted(_ALLOWED_IMAGE_EXT)}")
+
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    filename = f"{uuid.uuid4().hex}{ext}"
+    dest_path = os.path.join(UPLOAD_DIR, filename)
+    with open(dest_path, "wb") as f:
+        f.write(file.file.read())
+
+    sheet.image_url = f"/static/uploads/{filename}"
+    db.commit()
+    db.refresh(sheet)
+    return _sheet_out(sheet, db)
+
+
 @router.post("/sheets/{sheet_id}/save-results", response_model=CostSheetWithLines)
 def save_sheet_results(sheet_id: int, db: Session = Depends(get_db)):
     sheet = db.get(CostSheet, sheet_id)
@@ -490,91 +801,62 @@ def save_sheet_results(sheet_id: int, db: Session = Depends(get_db)):
         pct_change = (calc.price_after_discount - prev_price) / prev_price * Decimal("100")
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-
-    for i, (line, rm_r) in enumerate(zip(sheet.lines, calc.line_rm_results)):
-        pc = calc.line_process_costs[i]
-        existing = db.query(CostingResult).filter_by(costing_line_id=line.id).first()
-        vals = dict(
-            norm_library_id=rm_r.norm_library_id,
-            calculated_at=now,
-            total_part_weight=rm_r.total_part_weight,
-            blank_weight=rm_r.blank_weight,
-            total_blank_weight=rm_r.total_blank_weight,
-            blank_rate=rm_r.blank_rate,
-            blank_cost=rm_r.blank_cost,
-            process_loss_pct=rm_r.process_loss_pct,
-            process_loss_weight=rm_r.process_loss_weight,
-            scrap_weight=rm_r.scrap_weight,
-            scrap_cost=rm_r.scrap_cost,
-            rm_cost=rm_r.rm_cost,
-            line_process_cost=pc,
-        )
-        if existing:
-            for k, v in vals.items():
-                setattr(existing, k, v)
-        else:
-            db.add(CostingResult(costing_line_id=line.id, **vals))
-
-    sheet_vals = dict(
-        norm_library_id=calc.norm_library_id,
-        calculated_at=now,
-        total_rm_cost=calc.total_rm_cost,
-        overhead_rm=calc.rm_block.overhead,
-        rework_rm=calc.rm_block.rework,
-        inventory_rm=calc.rm_block.inventory,
-        profit_rm=calc.rm_block.profit,
-        rm_grand_total=calc.rm_block.grand_total,
-        total_bo_cost=calc.total_bo_cost,
-        overhead_bo=calc.bo_block.overhead,
-        inventory_bo=calc.bo_block.inventory,
-        profit_bo=calc.bo_block.profit,
-        bo_grand_total=calc.bo_block.grand_total,
-        total_process_cost=calc.total_process_cost,
-        overhead_proc=calc.process_block.overhead,
-        rework_proc=calc.process_block.rework,
-        profit_proc=calc.process_block.profit,
-        process_grand_total=calc.process_block.grand_total,
-        unit_price=calc.unit_price,
-        transport_cost_snap=calc.transport_cost,
-        discount_pct_snap=calc.discount_pct,
-        price_after_discount=calc.price_after_discount,
-        pct_change_vs_previous=pct_change,
-        bal_margin=calc.bal_margin,
-        bal_margin_per_kg=calc.bal_margin_per_kg,
-        total_part_weight=calc.total_part_weight,
-    )
-    existing_result = db.query(CostSheetResult).filter_by(cost_sheet_id=sheet_id).first()
-    if existing_result:
-        for k, v in sheet_vals.items():
-            setattr(existing_result, k, v)
-    else:
-        db.add(CostSheetResult(cost_sheet_id=sheet_id, **sheet_vals))
-
-    for i, line in enumerate(sheet.lines):
-        inp = CostingLineInput(
-            grade_id=line.grade_id or 0,
-            thickness_band=line.thickness_band or "",
-            part_weight=line.part_weight,
-            qty=line.qty,
-            efficiency_pct=line.efficiency_pct,
-            thickness_mm=line.thickness_mm or Decimal("0"),
-        )
-        from app.calc_engine import _operation_cost as _op_cost
-        for op in line.operations:
-            op_inp = LineOperationInput(op.operation_type, op.input_data)
-            try:
-                op.operation_cost = _op_cost(op_inp, inp, norms)
-            except Exception:
-                op.operation_cost = Decimal("0")
-
-    for fop in sheet.finishing_ops:
-        from app.calc_engine import _ZERO
-        rate = norms.process_rates.get(fop.operation_name, _ZERO)
-        fop.computed_cost = fop.input_qty * rate
+    _persist_sheet_calc(sheet, calc, norms, db, now, pct_change_vs_previous=pct_change)
+    _record_price_history(sheet, calc, norms, db)
 
     db.commit()
     db.refresh(sheet)
     return _sheet_out(sheet, db, norms)
+
+
+@router.get("/sheets/{sheet_id}/price-history", response_model=list[PriceHistoryEntryOut])
+def get_price_history(sheet_id: int, db: Session = Depends(get_db)):
+    sheet = db.get(CostSheet, sheet_id)
+    if not sheet:
+        raise HTTPException(status_code=404, detail="Cost sheet not found")
+    return (
+        db.query(PriceHistoryEntry)
+        .filter_by(cost_sheet_id=sheet_id)
+        .order_by(PriceHistoryEntry.change_no)
+        .all()
+    )
+
+
+@router.post("/workbooks/{workbook_id}/reprice", response_model=RepriceResponse)
+def reprice_workbook(workbook_id: int, db: Session = Depends(get_db)):
+    """One-click bulk repricing: recalculates every sheet in this workbook that already has a saved
+    result (an 'open quotation') against current norms, logs price history, and returns a before/after diff."""
+    wb = db.get(CostWorkbook, workbook_id)
+    if not wb:
+        raise HTTPException(status_code=404, detail="Workbook not found")
+
+    items: list[RepriceResultItem] = []
+    for sheet in sorted(wb.cost_sheets, key=lambda s: s.created_at):
+        if not sheet.saved_result:
+            continue  # not yet quoted — nothing to reprice
+        before_price = sheet.saved_result.price_after_discount
+
+        try:
+            norms = load_norms_snapshot(db, client_id=_sheet_client_id(sheet))
+        except ValueError:
+            continue
+        calc = _sheet_calc(sheet, norms)
+        if calc is None:
+            continue
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        _persist_sheet_calc(sheet, calc, norms, db, now)
+        _record_price_history(sheet, calc, norms, db)
+
+        after_price = calc.price_after_discount
+        pct = ((after_price - before_price) / before_price * Decimal("100")) if before_price else None
+        items.append(RepriceResultItem(
+            sheet_id=sheet.id, name=sheet.name,
+            before_price=before_price, after_price=after_price, pct_change=pct,
+        ))
+
+    db.commit()
+    return RepriceResponse(workbook_id=workbook_id, repriced_count=len(items), items=items)
 
 
 # ---------------------------------------------------------------------------
@@ -587,6 +869,8 @@ def add_line(sheet_id: int, body: CostingLineCreate, db: Session = Depends(get_d
     if not sheet:
         raise HTTPException(status_code=404, detail="Cost sheet not found")
 
+    _validate_parent_line(body.parent_line_id, sheet_id, db)
+
     if body.sl_no is None:
         max_sl = db.query(func.max(CostingLine.sl_no)).filter_by(cost_sheet_id=sheet_id).scalar() or 0
         sl_no = max_sl + 1
@@ -596,6 +880,7 @@ def add_line(sheet_id: int, body: CostingLineCreate, db: Session = Depends(get_d
     line = CostingLine(
         cost_sheet_id=sheet_id,
         sl_no=sl_no,
+        parent_line_id=body.parent_line_id,
         description=body.description,
         spec=body.spec,
         grade_id=body.grade_id,
@@ -615,7 +900,8 @@ def add_line(sheet_id: int, body: CostingLineCreate, db: Session = Depends(get_d
         norms = load_norms_snapshot(db, client_id=_sheet_client_id(sheet))
     except ValueError:
         norms = None
-    return _line_out(line, norms)
+    levels = _compute_level_numbers(sheet.lines)
+    return _line_out(line, norms, levels)
 
 
 @router.patch("/sheets/{sheet_id}/lines/{line_id}", response_model=CostingLineOut)
@@ -623,7 +909,10 @@ def update_line(sheet_id: int, line_id: int, body: CostingLineUpdate, db: Sessio
     line = db.get(CostingLine, line_id)
     if not line or line.cost_sheet_id != sheet_id:
         raise HTTPException(status_code=404, detail="Costing line not found")
-    for fld, value in body.model_dump(exclude_unset=True).items():
+    updates = body.model_dump(exclude_unset=True)
+    if "parent_line_id" in updates:
+        _validate_parent_line(updates["parent_line_id"], sheet_id, db, self_id=line_id)
+    for fld, value in updates.items():
         setattr(line, fld, value)
     _clear_sheet_result(sheet_id, db)
     db.flush()
@@ -649,7 +938,8 @@ def update_line(sheet_id: int, line_id: int, body: CostingLineUpdate, db: Sessio
                 log.warning("recompute op cost failed for type=%r: %s", op.operation_type, e)
     db.commit()
     db.refresh(line)
-    return _line_out(line, norms)
+    levels = _compute_level_numbers(line.sheet.lines)
+    return _line_out(line, norms, levels)
 
 
 @router.delete("/sheets/{sheet_id}/lines/{line_id}", status_code=204)
@@ -657,6 +947,12 @@ def delete_line(sheet_id: int, line_id: int, db: Session = Depends(get_db)):
     line = db.get(CostingLine, line_id)
     if not line or line.cost_sheet_id != sheet_id:
         raise HTTPException(status_code=404, detail="Costing line not found")
+    child_count = db.query(func.count(CostingLine.id)).filter_by(parent_line_id=line_id).scalar() or 0
+    if child_count:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Line has {child_count} sub-assembly line(s) under it — delete or reparent them first",
+        )
     _clear_sheet_result(sheet_id, db)
     db.delete(line)
     db.commit()
@@ -704,6 +1000,8 @@ def add_bo_item(sheet_id: int, body: BOLineItemCreate, db: Session = Depends(get
         description=body.description,
         qty=body.qty,
         unit_price=body.unit_price,
+        catalog_item_id=body.catalog_item_id,
+        unit_weight_kg=body.unit_weight_kg,
     )
     db.add(item)
     _clear_sheet_result(sheet_id, db)

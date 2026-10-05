@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Computed, DateTime, ForeignKey, Integer, JSON, Numeric, String, func
+from sqlalchemy import Boolean, Computed, Date, DateTime, ForeignKey, Integer, JSON, Numeric, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -20,6 +20,7 @@ class CostWorkbook(Base):
     client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"), nullable=False)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str | None] = mapped_column(String, nullable=True)
+    sets_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
     client: Mapped[Client] = relationship(back_populates="cost_workbooks")
@@ -38,6 +39,14 @@ class CostSheet(Base):
     description: Mapped[str | None] = mapped_column(String(500), nullable=True)
     drawing_no: Mapped[str | None] = mapped_column(String(100), nullable=True)
     benchmark_price: Mapped[Decimal | None] = mapped_column(Numeric(14, 4), nullable=True)
+    image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    qty_per_set: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, server_default="1")
+    is_optional: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    status: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    remarks: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    first_supply_price: Mapped[Decimal | None] = mapped_column(Numeric(14, 4), nullable=True)
+    first_supply_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    first_supply_rm_reference: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
     # Costing fields
     supply_version: Mapped[str] = mapped_column(String(100), nullable=False, server_default="V1")
     discount_pct: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=False, server_default="0")
@@ -57,6 +66,9 @@ class CostSheet(Base):
     saved_result: Mapped[CostSheetResult | None] = relationship(
         back_populates="sheet", uselist=False, cascade="all, delete-orphan"
     )
+    price_history: Mapped[list[PriceHistoryEntry]] = relationship(
+        back_populates="sheet", cascade="all, delete-orphan", order_by="PriceHistoryEntry.change_no"
+    )
 
 
 class CostingLine(Base):
@@ -65,6 +77,7 @@ class CostingLine(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     cost_sheet_id: Mapped[int] = mapped_column(ForeignKey("cost_sheets.id"), nullable=False)
     sl_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    parent_line_id: Mapped[int | None] = mapped_column(ForeignKey("costing_lines.id"), nullable=True)
     description: Mapped[str | None] = mapped_column(String(500), nullable=True)
     spec: Mapped[str | None] = mapped_column(String(200), nullable=True)
     grade_id: Mapped[int | None] = mapped_column(ForeignKey("material_grades.id"), nullable=True)
@@ -75,6 +88,9 @@ class CostingLine(Base):
     efficiency_pct: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=False, server_default="100")
 
     sheet: Mapped[CostSheet] = relationship(back_populates="lines")
+    parent: Mapped[CostingLine | None] = relationship(
+        "CostingLine", remote_side="CostingLine.id", foreign_keys=[parent_line_id]
+    )
     operations: Mapped[list[LineOperation]] = relationship(
         back_populates="line", cascade="all, delete-orphan"
     )
@@ -122,6 +138,8 @@ class BOLineItem(Base):
     bo_line_cost: Mapped[Decimal] = mapped_column(
         Numeric(14, 4), Computed("qty * unit_price", persisted=True)
     )
+    catalog_item_id: Mapped[int | None] = mapped_column(ForeignKey("bo_catalog_items.id"), nullable=True)
+    unit_weight_kg: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
 
     sheet: Mapped[CostSheet] = relationship(back_populates="bo_items")
 
@@ -213,3 +231,19 @@ class ProcessCostRow(Base):
     has_rolling: Mapped[bool] = mapped_column(nullable=False, server_default="false")
 
     line: Mapped[CostingLine] = relationship(back_populates="process_cost_row")
+
+
+class PriceHistoryEntry(Base):
+    """One row per recorded price change for a cost sheet — 'Change 1, 2, ...' log."""
+    __tablename__ = "price_history_entries"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    cost_sheet_id: Mapped[int] = mapped_column(ForeignKey("cost_sheets.id"), nullable=False)
+    change_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    price: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
+    rm_reference_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
+    discount_pct: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=False, server_default="0")
+    pct_change_vs_last_supplied: Mapped[Decimal | None] = mapped_column(Numeric(10, 6), nullable=True)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+    sheet: Mapped[CostSheet] = relationship(back_populates="price_history")

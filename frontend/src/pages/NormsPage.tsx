@@ -7,6 +7,11 @@ import { clientsApi } from "../api/clients"
 import { RmPriceMatrix } from "../components/norms/RmPriceMatrix"
 import { ProcessRatesTable } from "../components/norms/ProcessRatesTable"
 import { OverheadParams } from "../components/norms/OverheadParams"
+import { SteelPriceBuildUp } from "../components/norms/SteelPriceBuildUp"
+import { GradeEquivalenceTable } from "../components/norms/GradeEquivalenceTable"
+import { SectionCatalogTable } from "../components/norms/SectionCatalogTable"
+import { BoughtOutCatalog } from "../components/norms/BoughtOutCatalog"
+import { RmPriceTrend } from "../components/norms/RmPriceTrend"
 import { Button } from "../components/ui/button"
 import { cn } from "../lib/utils"
 
@@ -381,6 +386,26 @@ export function NormsPage() {
 
             <Section title="3 — Overhead & Profit Parameters">
               <OverheadParams detail={detail} readOnly={readOnly} />
+            </Section>
+
+            <Section title="4 — Steel Price Build-Up">
+              <SteelPriceBuildUp detail={detail} readOnly={readOnly} />
+            </Section>
+
+            <Section title="5 — Grade Equivalence Mapping">
+              <GradeEquivalenceTable detail={detail} readOnly={readOnly} />
+            </Section>
+
+            <Section title="6 — Section / Bar / Tube Catalogue">
+              <SectionCatalogTable detail={detail} readOnly={readOnly} />
+            </Section>
+
+            <Section title="7 — Bought-Out Item Master">
+              <BoughtOutCatalog detail={detail} readOnly={readOnly} />
+            </Section>
+
+            <Section title="8 — RM Price Trend">
+              <RmPriceTrend detail={detail} clientId={detail.library.client_id} />
             </Section>
           </div>
         )

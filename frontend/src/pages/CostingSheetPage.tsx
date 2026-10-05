@@ -12,7 +12,7 @@ import { ProcessCostSection } from "../components/costing/ProcessCostSection"
 import { AiInsightsPanel } from "../components/costing/AiInsightsPanel"
 import { CostBreakdownDonut } from "../components/charts/CostBreakdownDonut"
 import { Button } from "../components/ui/button"
-import { cn } from "../lib/utils"
+import { cn, compareLevelNo, levelDepth } from "../lib/utils"
 import type { CostingLine, BlockMarkup, RmLineResult } from "../types/parts"
 
 function n(v: string | number | undefined | null, dp = 2) {
@@ -188,6 +188,7 @@ export function CostingSheetPage() {
   // Finishing op form
   const [finFormOpen, setFinFormOpen] = useState(false)
   const [finForm, setFinForm] = useState({ operation_name: "", input_qty: "0" })
+  const [paintCalc, setPaintCalc] = useState({ area_mm2: "", num_sides: "1" })
 
   // Sheet settings
   const [settingsEditing, setSettingsEditing] = useState(false)
@@ -252,6 +253,7 @@ export function CostingSheetPage() {
       toast.success("Finishing op added")
       setFinFormOpen(false)
       setFinForm({ operation_name: "", input_qty: "0" })
+      setPaintCalc({ area_mm2: "", num_sides: "1" })
     },
     onError: (e: Error) => toast.error(e.message),
   })
@@ -304,7 +306,9 @@ export function CostingSheetPage() {
     <div className="flex items-center justify-center h-64 text-slate-400 text-sm">Loading…</div>
   )
 
-  const lines = sheet.lines
+  const lines = [...sheet.lines].sort((a, b) =>
+    compareLevelNo(a.level_no ?? String(a.sl_no), b.level_no ?? String(b.sl_no))
+  )
   const boItems = sheet.bo_items
   const finOps = sheet.finishing_ops
   const sr = sheet.sheet_result
@@ -402,6 +406,7 @@ export function CostingSheetPage() {
           sheetId={id}
           clientId={clientId}
           editing={editingLine}
+          lines={lines}
           onSaved={onSaved}
           onCancel={() => { setEditorOpen(false); setEditingLine(null) }}
         />
@@ -448,8 +453,14 @@ export function CostingSheetPage() {
                         editingLine?.id === line.id && "ring-1 ring-inset ring-primary/30 bg-sky-50/20",
                         isExpanded && "bg-sky-50/20"
                       )}>
-                        <td className="px-3 py-3 text-slate-400 font-mono">{line.sl_no}</td>
-                        <td className="px-3 py-3 font-medium text-slate-900 max-w-[160px] truncate">{line.description ?? "—"}</td>
+                        <td className="px-3 py-3 text-slate-400 font-mono">{line.level_no ?? line.sl_no}</td>
+                        <td
+                          className="px-3 py-3 font-medium text-slate-900 max-w-[160px] truncate"
+                          style={{ paddingLeft: `${12 + levelDepth(line.level_no) * 16}px` }}
+                        >
+                          {levelDepth(line.level_no) > 0 && <span className="text-slate-300 mr-1">↳</span>}
+                          {line.description ?? "—"}
+                        </td>
                         <td className="px-3 py-3 text-slate-400 max-w-[100px] truncate">{line.spec ?? "—"}</td>
                         <td className="px-3 py-3 text-slate-500">
                           {line.grade_id ? (gradeMap[line.grade_id] ?? `#${line.grade_id}`) : "—"}
@@ -740,6 +751,46 @@ export function CostingSheetPage() {
                 </tr>
               )}
 
+              {finFormOpen && procRateMap[finForm.operation_name]?.unit === "Rs/Sqm" && (
+                <tr className="bg-sky-50/20">
+                  <td colSpan={4} className="px-4 pb-3 pt-0">
+                    <div className="flex items-end gap-2 pl-1">
+                      <span className="text-[11px] text-slate-400 italic pb-2">Paint area calculator:</span>
+                      <div>
+                        <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-1 block">Surface Area (mm²)</label>
+                        <input
+                          type="number" min="0" step="any"
+                          value={paintCalc.area_mm2}
+                          onChange={e => {
+                            const area_mm2 = e.target.value
+                            setPaintCalc(p => ({ ...p, area_mm2 }))
+                            const sqm = (Number(area_mm2) || 0) * (Number(paintCalc.num_sides) || 1) / 1_000_000
+                            setFinForm(p => ({ ...p, input_qty: String(sqm) }))
+                          }}
+                          className={cn(ic, "w-32")}
+                        />
+                      </div>
+                      <span className="text-slate-400 text-xs pb-2">×</span>
+                      <div>
+                        <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-1 block">No. of Sides</label>
+                        <input
+                          type="number" min="1" step="1"
+                          value={paintCalc.num_sides}
+                          onChange={e => {
+                            const num_sides = e.target.value
+                            setPaintCalc(p => ({ ...p, num_sides }))
+                            const sqm = (Number(paintCalc.area_mm2) || 0) * (Number(num_sides) || 1) / 1_000_000
+                            setFinForm(p => ({ ...p, input_qty: String(sqm) }))
+                          }}
+                          className={cn(ic, "w-20")}
+                        />
+                      </div>
+                      <span className="text-slate-400 text-xs pb-2">→ fills Input Qty = {n(finForm.input_qty, 4)} sqm</span>
+                    </div>
+                  </td>
+                </tr>
+              )}
+
               {finOps.length > 0 && (
                 <tr className="border-t-2 border-slate-200 bg-slate-50 font-semibold">
                   <td colSpan={2} className="px-4 py-2.5 text-slate-500 text-[11px] uppercase tracking-wide">
@@ -766,6 +817,71 @@ export function CostingSheetPage() {
           )}
         </div>
       </section>
+
+      {/* ── Price History ── */}
+      {sheet.price_history.length > 0 && (
+        <section>
+          <SectionHead>Price History &amp; Repricing</SectionHead>
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-4">
+            {sheet.first_supply_price && (
+              <div className="rounded-lg border border-sky-200 bg-sky-50/50 px-4 py-3 flex flex-wrap gap-6">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">First Supply Price</p>
+                  <p className="text-sm font-bold text-slate-900 font-mono mt-0.5">₹{n(sheet.first_supply_price)}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">First Supply Date</p>
+                  <p className="text-sm font-semibold text-slate-700 mt-0.5">
+                    {sheet.first_supply_date ? new Date(sheet.first_supply_date).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">RM Reference (20mm)</p>
+                  <p className="text-sm font-semibold text-slate-700 mt-0.5 font-mono">
+                    {sheet.first_supply_rm_reference ? `₹${n(sheet.first_supply_rm_reference, 2)}/kg` : "—"}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            <div className="overflow-x-auto rounded-lg border border-slate-200">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-500">
+                    <th className="px-4 py-2.5 text-left font-semibold uppercase tracking-wider text-[11px]">Change</th>
+                    <th className="px-4 py-2.5 text-left font-semibold uppercase tracking-wider text-[11px]">Date</th>
+                    <th className="px-4 py-2.5 text-right font-semibold uppercase tracking-wider text-[11px]">Price</th>
+                    <th className="px-4 py-2.5 text-right font-semibold uppercase tracking-wider text-[11px]">RM Ref (20mm)</th>
+                    <th className="px-4 py-2.5 text-right font-semibold uppercase tracking-wider text-[11px]">Disc %</th>
+                    <th className="px-4 py-2.5 text-right font-semibold uppercase tracking-wider text-[11px]">% vs Last Supplied</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {sheet.price_history.map(h => (
+                    <tr key={h.id} className="hover:bg-slate-50/60">
+                      <td className="px-4 py-2 font-semibold text-slate-700">Change {h.change_no}</td>
+                      <td className="px-4 py-2 text-slate-500">
+                        {new Date(h.recorded_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
+                      </td>
+                      <td className="px-4 py-2 text-right tabular-nums font-mono font-semibold">₹{n(h.price)}</td>
+                      <td className="px-4 py-2 text-right tabular-nums font-mono text-slate-500">
+                        {h.rm_reference_price ? `₹${n(h.rm_reference_price, 2)}` : "—"}
+                      </td>
+                      <td className="px-4 py-2 text-right tabular-nums font-mono text-slate-500">{n(h.discount_pct, 1)}%</td>
+                      <td className={cn(
+                        "px-4 py-2 text-right tabular-nums font-mono font-semibold",
+                        h.pct_change_vs_last_supplied == null ? "text-slate-400" : Number(h.pct_change_vs_last_supplied) > 0 ? "text-red-600" : "text-emerald-600"
+                      )}>
+                        {h.pct_change_vs_last_supplied == null ? "— (first supply)" : (Number(h.pct_change_vs_last_supplied) > 0 ? "+" : "") + n(h.pct_change_vs_last_supplied, 2) + "%"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* ── Sheet Settings + Result ── */}
       <section>

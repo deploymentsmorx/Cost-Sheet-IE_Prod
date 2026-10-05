@@ -48,6 +48,57 @@ export interface CostOverheadParam {
   updated_at: string
 }
 
+export interface SteelPriceBuildUp {
+  id: number
+  grade_id: number
+  thickness_band: string
+  basic_price_per_tonne: string
+  ust_amount: string
+  trimming_amount: string
+  normalising_amount: string
+  trader_transport_constant: string
+  price_per_kg: string
+  updated_at: string
+}
+
+export interface GradeEquivalence {
+  id: number
+  customer_spec: string
+  material_grade_id: number
+  notes: string | null
+  updated_at: string
+}
+
+export type SectionCategory = "channel" | "angle" | "round_bar" | "square_bar" | "flat_bar" | "pipe"
+
+export interface SectionCatalogItem {
+  id: number
+  category: SectionCategory
+  designation: string
+  kg_per_m: string
+  rate_per_kg: string
+  rate_per_m: string
+  updated_at: string
+}
+
+export interface BoughtOutCatalogItem {
+  id: number
+  name: string
+  category: string | null
+  unit_weight_kg: string | null
+  rate: string
+  updated_at: string
+}
+
+export interface RmPriceTrendPoint {
+  norm_library_id: number
+  label: string
+  effective_date: string
+  is_current: boolean
+  is_draft: boolean
+  price_per_kg: string
+}
+
 export interface NormLibraryDetail {
   library: NormLibrarySummary
   material_grades: MaterialGrade[]
@@ -55,6 +106,10 @@ export interface NormLibraryDetail {
   scrap_rate: ScrapRate | null
   process_rates: ProcessRate[]
   overhead_params: CostOverheadParam[]
+  steel_price_buildups: SteelPriceBuildUp[]
+  grade_equivalences: GradeEquivalence[]
+  section_catalog_items: SectionCatalogItem[]
+  bo_catalog_items: BoughtOutCatalogItem[]
 }
 
 export interface NormsLookup {

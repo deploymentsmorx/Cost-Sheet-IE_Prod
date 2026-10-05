@@ -26,6 +26,7 @@ interface Props {
   sheetId: number
   clientId: number | null
   editing: CostingLine | null
+  lines: CostingLine[]
   onSaved: () => void
   onCancel: () => void
 }
@@ -39,12 +40,14 @@ interface FormState {
   qty: string
   part_weight: string
   efficiency_pct: string
+  parent_line_id: string
 }
 
 function blankForm(): FormState {
   return {
     description: "", spec: "", grade_id: "", thickness_band: "",
     thickness_mm: "", qty: "1", part_weight: "0", efficiency_pct: "90",
+    parent_line_id: "",
   }
 }
 
@@ -58,7 +61,25 @@ function lineToForm(l: CostingLine): FormState {
     qty: l.qty,
     part_weight: l.part_weight,
     efficiency_pct: l.efficiency_pct,
+    parent_line_id: l.parent_line_id?.toString() ?? "",
   }
+}
+
+/** Lines that would NOT create a cycle if chosen as this line's parent: excludes self and all of self's descendants. */
+function eligibleParents(lines: CostingLine[], selfId: number | null): CostingLine[] {
+  if (selfId == null) return lines
+  const excluded = new Set<number>([selfId])
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const l of lines) {
+      if (l.parent_line_id != null && excluded.has(l.parent_line_id) && !excluded.has(l.id)) {
+        excluded.add(l.id)
+        changed = true
+      }
+    }
+  }
+  return lines.filter(l => !excluded.has(l.id))
 }
 
 const inputCls = "border border-slate-200 rounded-lg px-3 py-2 text-sm w-full bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors"
@@ -73,7 +94,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   )
 }
 
-export function LineEditorPanel({ sheetId, clientId, editing, onSaved, onCancel }: Props) {
+export function LineEditorPanel({ sheetId, clientId, editing, lines, onSaved, onCancel }: Props) {
   const [form, setForm] = useState<FormState>(editing ? lineToForm(editing) : blankForm())
   const [preview, setPreview] = useState<RmLineResult | null>(editing?.rm_result ?? null)
   const [saving, setSaving] = useState(false)
@@ -132,6 +153,7 @@ export function LineEditorPanel({ sheetId, clientId, editing, onSaved, onCancel 
         qty: form.qty,
         part_weight: form.part_weight,
         efficiency_pct: form.efficiency_pct,
+        parent_line_id: form.parent_line_id ? Number(form.parent_line_id) : null,
       }
       if (editing) await partsApi.updateLine(sheetId, editing.id, body)
       else await partsApi.addLine(sheetId, body)
@@ -147,7 +169,7 @@ export function LineEditorPanel({ sheetId, clientId, editing, onSaved, onCancel 
     <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
       <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50/60">
         <div>
-          <h3 className="text-sm font-semibold text-slate-900">{editing ? `Edit Line ${editing.sl_no}` : "New RM Line"}</h3>
+          <h3 className="text-sm font-semibold text-slate-900">{editing ? `Edit Line ${editing.level_no ?? editing.sl_no}` : "New RM Line"}</h3>
           <p className="text-xs text-slate-400 mt-0.5">Material selection and weights. Process ops are added inline in the table below.</p>
         </div>
         <button onClick={onCancel} className="text-slate-400 hover:text-slate-700 transition-colors text-lg leading-none w-7 h-7 flex items-center justify-center rounded-md hover:bg-slate-100">✕</button>
@@ -166,6 +188,22 @@ export function LineEditorPanel({ sheetId, clientId, editing, onSaved, onCancel 
               <div>
                 <label className={labelCls}>Spec / Material Spec</label>
                 <input value={form.spec} onChange={e => set("spec", e.target.value)} className={inputCls} placeholder="e.g. IS 2062 E250" />
+              </div>
+              <div className="col-span-2">
+                <label className={labelCls}>Sub-assembly of (parent line)</label>
+                <select
+                  value={form.parent_line_id}
+                  onChange={e => setForm(f => ({ ...f, parent_line_id: e.target.value }))}
+                  className={inputCls}
+                >
+                  <option value="">— top-level line —</option>
+                  {eligibleParents(lines, editing?.id ?? null).map(l => (
+                    <option key={l.id} value={l.id}>
+                      {l.level_no ?? l.sl_no} — {l.description ?? "(no description)"}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-slate-400 mt-1">Leave blank for a top-level BOM line. Pick a line to nest this one under it as a sub-part.</p>
               </div>
             </div>
           </div>
