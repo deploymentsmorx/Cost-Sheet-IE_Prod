@@ -2,6 +2,7 @@ import { useState } from "react"
 import { Sparkles, AlertTriangle, CheckCircle, Info, ChevronDown, ChevronUp, Loader2 } from "lucide-react"
 import { Button } from "../ui/button"
 import { cn } from "../../lib/utils"
+import { API_BASE_URL } from "../../lib/apiBase"
 
 // ---------------------------------------------------------------------------
 // Types (mirrors backend AiInsights schema)
@@ -86,12 +87,16 @@ export function AiInsightsPanel({ sheetId }: { sheetId: number }) {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch(`/api/sheets/${sheetId}/ai-insights`, { method: "POST" })
+      const res = await fetch(`${API_BASE_URL}/api/sheets/${sheetId}/ai-insights`, { method: "POST" })
+      const raw = await res.text()
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: res.statusText }))
+        const err = raw ? JSON.parse(raw) : { detail: res.statusText }
         throw new Error(err.detail ?? "AI analysis failed")
       }
-      const data: AiInsights = await res.json()
+      if (!raw) {
+        throw new Error("Server returned an empty response — check the backend logs (e.g. a timed-out Anthropic API call).")
+      }
+      const data: AiInsights = JSON.parse(raw)
       setInsights(data)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Unknown error")
