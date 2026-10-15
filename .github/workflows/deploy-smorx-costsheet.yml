@@ -1,0 +1,62 @@
+name: Deploy smorx-costsheet
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-smorx-costsheet
+  cancel-in-progress: false
+
+jobs:
+  frontend-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build
+
+  deploy:
+    needs: frontend-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.LIGHTSAIL_HOST }}
+          username: ${{ secrets.LIGHTSAIL_USER }}
+          key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+          command_timeout: 30m
+          script: |
+            set -euo pipefail
+            cd ~/apps/smorx-costsheet
+            if [ ! -f .env.smorx-costsheet.production ]; then
+              echo "Missing .env.smorx-costsheet.production - run deploy/setup-env.smorx-costsheet.sh on the server first."
+              exit 1
+            fi
+            git fetch --prune origin main
+            git reset --hard origin/main
+            docker compose -f docker-compose.smorx-costsheet.yml up -d --build --remove-orphans
+            for i in $(seq 1 30); do
+              if curl -fsS http://localhost:29686/health >/dev/null; then
+                echo "API healthy"
+                docker compose -f docker-compose.smorx-costsheet.yml ps
+                docker image prune -f >/dev/null
+                exit 0
+              fi
+              sleep 5
+            done
+            echo "API did not become healthy"
+            docker compose -f docker-compose.smorx-costsheet.yml ps
+            docker logs --tail 100 smorx-costsheet-api
+            exit 1
