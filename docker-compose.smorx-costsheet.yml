@@ -1,0 +1,65 @@
+# Production stack for the Cost Sheet app on the shared Lightsail server.
+#   cd ~/apps/smorx-costsheet
+#   ./deploy/setup-env.smorx-costsheet.sh        # once, creates .env.smorx-costsheet.production
+#   docker compose -f docker-compose.smorx-costsheet.yml up -d --build
+#
+# Host ports: 29686 -> api, 28080 -> web. Postgres is NOT published on the host.
+name: smorx-costsheet
+
+services:
+  db:
+    image: postgres:16
+    container_name: smorx-costsheet-db
+    restart: unless-stopped
+    env_file: .env.smorx-costsheet.production
+    volumes:
+      - smorx-costsheet-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  api:
+    build: ./backend
+    image: smorx-costsheet-api
+    container_name: smorx-costsheet-api
+    restart: unless-stopped
+    env_file: .env.smorx-costsheet.production
+    environment:
+      PORT: "8000"
+      AWS_SHARED_CREDENTIALS_FILE: /root/.aws/credentials
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "29686:8000"
+    volumes:
+      - smorx-costsheet-data:/app/static
+      - ./.secrets/aws/credentials:/root/.aws/credentials:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://100.51.165.76:29686}
+    image: smorx-costsheet-web
+    container_name: smorx-costsheet-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "28080:80"
+
+volumes:
+  smorx-costsheet-data:
+    name: smorx-costsheet-data
+  smorx-costsheet-pgdata:
+    name: smorx-costsheet-pgdata
