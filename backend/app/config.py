@@ -12,6 +12,10 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     # Comma-separated list of allowed CORS origins (e.g. the frontend's Render URL in production)
     allowed_origins: str = "http://localhost:5173,http://localhost:5174,http://localhost:3000"
+    # When set, part images go to this S3 bucket (credentials from the AWS credentials file).
+    aws_s3_bucket: str = ""
+    aws_region: str = "ap-south-1"
+    aws_s3_prefix: str = "costsheet/uploads"
 
     model_config = {"env_file": str(_env_file)}
 

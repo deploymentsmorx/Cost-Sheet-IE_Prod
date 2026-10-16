@@ -31,9 +31,13 @@ DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@db:5432/${DB_NAME}
 ANTHROPIC_API_KEY=${ANTHROPIC_KEY}
 ALLOWED_ORIGINS=http://${PUBLIC_HOST}:28080
 WEB_CONCURRENCY=2
+AWS_S3_BUCKET=
+AWS_REGION=ap-south-1
+AWS_S3_PREFIX=costsheet/uploads
 EOF
   unset DB_PASS ANTHROPIC_KEY
   echo "Created $ENV_FILE (values not shown)."
+  echo "Run deploy/configure-s3.smorx-costsheet.sh next to set the S3 bucket."
 fi
 chmod 600 "$ENV_FILE"
 

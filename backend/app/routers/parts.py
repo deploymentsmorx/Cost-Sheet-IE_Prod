@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-import os
-import uuid
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
@@ -41,6 +39,7 @@ from app.models.parts import (
     SheetFinishingOp,
 )
 from app.norms_loader import load_norms_snapshot
+from app.storage import save_image
 from app.schemas.parts import (
     BOLineItemCreate,
     BOLineItemOut,
@@ -75,10 +74,6 @@ from app.schemas.parts import (
 )
 
 router = APIRouter(prefix="/api/v1", tags=["workbooks"])
-
-_BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-UPLOAD_DIR = os.path.join(_BACKEND_DIR, "static", "uploads")
-_ALLOWED_IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 
 
 def _clear_sheet_result(cost_sheet_id: int, db: Session) -> None:
@@ -749,17 +744,12 @@ def upload_sheet_image(sheet_id: int, file: UploadFile = File(...), db: Session 
     if not sheet:
         raise HTTPException(status_code=404, detail="Cost sheet not found")
 
-    ext = os.path.splitext(file.filename or "")[1].lower()
-    if ext not in _ALLOWED_IMAGE_EXT:
-        raise HTTPException(status_code=422, detail=f"Unsupported image type '{ext}'. Allowed: {sorted(_ALLOWED_IMAGE_EXT)}")
-
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
-    filename = f"{uuid.uuid4().hex}{ext}"
-    dest_path = os.path.join(UPLOAD_DIR, filename)
-    with open(dest_path, "wb") as f:
-        f.write(file.file.read())
-
-    sheet.image_url = f"/static/uploads/{filename}"
+    try:
+        sheet.image_url = save_image(file.file.read(), file.filename)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
     db.commit()
     db.refresh(sheet)
     return _sheet_out(sheet, db)
