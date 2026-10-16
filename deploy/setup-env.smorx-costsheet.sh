@@ -31,9 +31,9 @@ DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@db:5432/${DB_NAME}
 ANTHROPIC_API_KEY=${ANTHROPIC_KEY}
 ALLOWED_ORIGINS=http://${PUBLIC_HOST}:28080
 WEB_CONCURRENCY=2
-AWS_S3_BUCKET=
+AWS_S3_BUCKET=ieppcostsheeterp
 AWS_REGION=ap-south-1
-AWS_S3_PREFIX=costsheet/uploads
+AWS_S3_PREFIX=costsheet
 EOF
   unset DB_PASS ANTHROPIC_KEY
   echo "Created $ENV_FILE (values not shown)."

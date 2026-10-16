@@ -46,7 +46,7 @@ def _save_local(data: bytes, filename: str) -> str:
 
 
 def _save_s3(data: bytes, filename: str, ext: str) -> str:
-    prefix = (settings.aws_s3_prefix or "costsheet/uploads").strip("/")
+    prefix = (settings.aws_s3_prefix or "costsheet").strip("/")
     key = f"{prefix}/{filename}"
     region = settings.aws_region or "ap-south-1"
 

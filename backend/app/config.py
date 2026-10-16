@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     # When set, part images go to this S3 bucket (credentials from the AWS credentials file).
     aws_s3_bucket: str = ""
     aws_region: str = "ap-south-1"
-    aws_s3_prefix: str = "costsheet/uploads"
+    aws_s3_prefix: str = "costsheet"
 
     model_config = {"env_file": str(_env_file)}
 

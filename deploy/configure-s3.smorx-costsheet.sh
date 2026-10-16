@@ -15,19 +15,15 @@ if [ ! -f "$ENV_FILE" ]; then
   exit 1
 fi
 
-printf "S3 bucket name: "
+printf "S3 bucket name [ieppcostsheeterp]: "
 IFS= read -r BUCKET
+BUCKET="${BUCKET:-ieppcostsheeterp}"
 printf "AWS region [ap-south-1]: "
 IFS= read -r REGION
 REGION="${REGION:-ap-south-1}"
-printf "S3 key prefix [costsheet/uploads]: "
+printf "S3 key prefix [costsheet]: "
 IFS= read -r PREFIX
-PREFIX="${PREFIX:-costsheet/uploads}"
-
-if [ -z "$BUCKET" ]; then
-  echo "Bucket name is required."
-  exit 1
-fi
+PREFIX="${PREFIX:-costsheet}"
 
 tmp="$(mktemp)"
 grep -vE '^(AWS_S3_BUCKET|AWS_REGION|AWS_S3_PREFIX)=' "$ENV_FILE" > "$tmp"
