@@ -436,8 +436,8 @@ class TestCalculateSheet:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.integration
-def test_loader_and_engine_against_neon_db():
-    """Load the current norms from Neon and run a basic sheet calculation."""
+def test_loader_and_engine_against_db():
+    """Load current norms from DATABASE_URL and run a basic sheet calculation."""
     from app.database import SessionLocal
     from app.norms_loader import load_norms_snapshot
 
