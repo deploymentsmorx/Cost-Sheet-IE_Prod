@@ -9,7 +9,8 @@ _env_file = _here.parent.parent / ".env"  # project root
 
 class Settings(BaseSettings):
     database_url: str
-    anthropic_api_key: str = ""
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4o-mini"
     # Comma-separated list of allowed CORS origins (e.g. the frontend's Render URL in production)
     allowed_origins: str = "http://localhost:5173,http://localhost:5174,http://localhost:3000"
     # When set, part images go to this S3 bucket (credentials from the AWS credentials file).

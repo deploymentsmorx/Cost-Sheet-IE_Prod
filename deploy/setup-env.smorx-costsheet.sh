@@ -19,8 +19,8 @@ else
   DB_NAME="costsheet"
   DB_PASS="$(openssl rand -hex 32)"
 
-  printf "Anthropic API key for AI insights (input hidden, Enter to skip): "
-  IFS= read -rs ANTHROPIC_KEY || true
+  printf "OpenAI API key for AI insights (input hidden, Enter to skip): "
+  IFS= read -rs OPENAI_KEY || true
   echo
 
   cat > "$ENV_FILE" <<EOF
@@ -28,14 +28,15 @@ POSTGRES_USER=${DB_USER}
 POSTGRES_PASSWORD=${DB_PASS}
 POSTGRES_DB=${DB_NAME}
 DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@db:5432/${DB_NAME}
-ANTHROPIC_API_KEY=${ANTHROPIC_KEY}
+OPENAI_API_KEY=${OPENAI_KEY}
+OPENAI_MODEL=gpt-4o-mini
 ALLOWED_ORIGINS=http://${PUBLIC_HOST}:28080
 WEB_CONCURRENCY=2
 AWS_S3_BUCKET=ieppcostsheeterp
 AWS_REGION=ap-south-1
 AWS_S3_PREFIX=costsheet
 EOF
-  unset DB_PASS ANTHROPIC_KEY
+  unset DB_PASS OPENAI_KEY
   echo "Created $ENV_FILE (values not shown)."
   echo "Run deploy/configure-s3.smorx-costsheet.sh next to set the S3 bucket."
 fi

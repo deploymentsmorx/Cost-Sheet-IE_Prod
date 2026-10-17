@@ -94,7 +94,7 @@ export function AiInsightsPanel({ sheetId }: { sheetId: number }) {
         throw new Error(err.detail ?? "AI analysis failed")
       }
       if (!raw) {
-        throw new Error("Server returned an empty response — check the backend logs (e.g. a timed-out Anthropic API call).")
+        throw new Error("Server returned an empty response — check the backend logs (e.g. a timed-out OpenAI API call).")
       }
       const data: AiInsights = JSON.parse(raw)
       setInsights(data)

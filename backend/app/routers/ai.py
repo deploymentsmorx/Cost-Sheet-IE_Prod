@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 import logging
 
-import anthropic
 from fastapi import APIRouter, Depends, HTTPException
+from openai import APIError, OpenAI
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -52,8 +52,8 @@ class AiInsights(BaseModel):
 
 @router.post("/{sheet_id}/ai-insights", response_model=AiInsights)
 def get_ai_insights(sheet_id: int, db: Session = Depends(get_db)):
-    if not settings.anthropic_api_key:
-        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY not configured")
+    if not settings.openai_api_key:
+        raise HTTPException(status_code=503, detail="OPENAI_API_KEY not configured")
 
     sheet = db.get(CostSheet, sheet_id)
     if not sheet:
@@ -98,6 +98,7 @@ def get_ai_insights(sheet_id: int, db: Session = Depends(get_db)):
     client_name = workbook.client.name if workbook and workbook.client else "Not specified"
     workbook_name = workbook.name if workbook else "Unknown"
 
+    denom = unit_price if unit_price else 1.0
     prompt = f"""You are an expert manufacturing cost analyst specializing in steel fabrication and industrial engineering. Analyze this costing sheet and return ONLY valid JSON — no markdown, no explanation.
 
 CONTEXT:
@@ -107,9 +108,9 @@ Supply version: {sheet.supply_version}
 Total part weight: {tot_wt:.3f} kg
 
 COST BREAKDOWN (INR):
-  RM cost:       ₹{rm_cost:,.2f}  ({rm_cost/unit_price*100:.1f}% of price)
-  BO cost:       ₹{bo_cost:,.2f}  ({bo_cost/unit_price*100:.1f}% of price)
-  Process cost:  ₹{proc_cost:,.2f}  ({proc_cost/unit_price*100:.1f}% of price)
+  RM cost:       ₹{rm_cost:,.2f}  ({rm_cost/denom*100:.1f}% of price)
+  BO cost:       ₹{bo_cost:,.2f}  ({bo_cost/denom*100:.1f}% of price)
+  Process cost:  ₹{proc_cost:,.2f}  ({proc_cost/denom*100:.1f}% of price)
   Unit price:    ₹{unit_price:,.2f}
   Discount:      {discount:.1f}%
   Transport:     ₹{transport:,.2f}
@@ -153,13 +154,20 @@ Rules:
 - Be specific to the actual data, not generic"""
 
     try:
-        client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-        message = client.messages.create(
-            model="claude-haiku-4-5-20251001",
+        client = OpenAI(api_key=settings.openai_api_key)
+        completion = client.chat.completions.create(
+            model=settings.openai_model or "gpt-4o-mini",
             max_tokens=1500,
-            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You return only valid JSON matching the requested schema.",
+                },
+                {"role": "user", "content": prompt},
+            ],
         )
-        raw = message.content[0].text.strip()
+        raw = (completion.choices[0].message.content or "").strip()
         if raw.startswith("```"):
             raw = raw.split("```")[1]
             if raw.startswith("json"):
@@ -169,6 +177,6 @@ Rules:
     except json.JSONDecodeError as e:
         log.warning("AI response JSON parse error: %s", e)
         raise HTTPException(status_code=502, detail="AI returned invalid JSON")
-    except anthropic.APIError as e:
-        log.warning("Anthropic API error: %s", e)
+    except APIError as e:
+        log.warning("OpenAI API error: %s", e)
         raise HTTPException(status_code=502, detail=f"AI service error: {e}")
