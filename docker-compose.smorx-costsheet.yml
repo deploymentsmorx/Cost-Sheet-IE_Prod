@@ -29,6 +29,7 @@ services:
     env_file: .env.smorx-costsheet.production
     environment:
       PORT: "8000"
+      AUTH_API_URL: ${AUTH_API_URL:-http://smorx-inspection-api:9686}
       AWS_SHARED_CREDENTIALS_FILE: /root/.aws/credentials
     depends_on:
       db:

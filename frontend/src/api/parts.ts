@@ -11,11 +11,12 @@ import type {
   WorkbookSummaryOut,
 } from "../types/parts"
 import { API_BASE_URL } from "../lib/apiBase"
+import { apiFetch } from "../lib/authFetch"
 
 const BASE = API_BASE_URL + "/api/v1"
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(BASE + path, {
+  const res = await apiFetch(BASE + path, {
     headers: { "Content-Type": "application/json" },
     ...options,
   })
@@ -90,7 +91,7 @@ export const partsApi = {
   uploadImage: async (sheetId: number, file: File) => {
     const form = new FormData()
     form.append("file", file)
-    const res = await fetch(`${BASE}/sheets/${sheetId}/image`, { method: "POST", body: form })
+    const res = await apiFetch(`${BASE}/sheets/${sheetId}/image`, { method: "POST", body: form })
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }))
       throw new Error(err.detail ?? "Upload failed")

@@ -9,11 +9,12 @@ import type {
   SectionCategory,
 } from "../types/norms"
 import { API_BASE_URL } from "../lib/apiBase"
+import { apiFetch } from "../lib/authFetch"
 
 const BASE = API_BASE_URL + "/api/v1/norms"
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await apiFetch(`${BASE}${path}`, {
     headers: { "Content-Type": "application/json" },
     ...init,
   })

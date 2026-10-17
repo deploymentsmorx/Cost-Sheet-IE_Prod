@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query"
 import { normsApi } from "../../api/norms"
 import { partsApi } from "../../api/parts"
 import { API_BASE_URL } from "../../lib/apiBase"
+import { apiFetch } from "../../lib/authFetch"
 import type { CostingLine, RmLineResult } from "../../types/parts"
 import { Button } from "../ui/button"
 
@@ -124,7 +125,7 @@ export function LineEditorPanel({ sheetId, clientId, editing, lines, onSaved, on
     if (previewTimer.current) clearTimeout(previewTimer.current)
     previewTimer.current = setTimeout(async () => {
       try {
-        const res = await fetch(`${API_BASE_URL}/api/v1/calculate`, {
+        const res = await apiFetch(`${API_BASE_URL}/api/v1/calculate`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

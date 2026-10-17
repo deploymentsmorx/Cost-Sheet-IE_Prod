@@ -3,6 +3,7 @@ import { Sparkles, AlertTriangle, CheckCircle, Info, ChevronDown, ChevronUp, Loa
 import { Button } from "../ui/button"
 import { cn } from "../../lib/utils"
 import { API_BASE_URL } from "../../lib/apiBase"
+import { apiFetch } from "../../lib/authFetch"
 
 // ---------------------------------------------------------------------------
 // Types (mirrors backend AiInsights schema)
@@ -87,7 +88,7 @@ export function AiInsightsPanel({ sheetId }: { sheetId: number }) {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch(`${API_BASE_URL}/api/sheets/${sheetId}/ai-insights`, { method: "POST" })
+      const res = await apiFetch(`${API_BASE_URL}/api/sheets/${sheetId}/ai-insights`, { method: "POST" })
       const raw = await res.text()
       if (!res.ok) {
         const err = raw ? JSON.parse(raw) : { detail: res.statusText }

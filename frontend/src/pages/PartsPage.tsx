@@ -6,7 +6,7 @@ import { Layers, ChevronRight, ImagePlus } from "lucide-react"
 import { partsApi } from "../api/parts"
 import { Button } from "../components/ui/button"
 import { cn } from "../lib/utils"
-import { mediaUrl } from "../lib/apiBase"
+import { ProtectedImage } from "../components/ProtectedImage"
 import type { CostSheetWithLines } from "../types/parts"
 
 function fmtDate(s: string) {
@@ -236,7 +236,7 @@ export function PartsPage() {
                   <td className="px-4 py-2.5">
                     <label className="block w-10 h-10 rounded-md border border-slate-200 bg-slate-50 overflow-hidden cursor-pointer hover:border-primary/50 transition-colors relative group">
                       {s.image_url ? (
-                        <img src={mediaUrl(s.image_url)} alt={s.name} className="w-full h-full object-cover" />
+                        <ProtectedImage path={s.image_url} alt={s.name} className="w-full h-full object-cover" />
                       ) : (
                         <div className="w-full h-full flex items-center justify-center text-slate-300">
                           <ImagePlus className="w-4 h-4" />

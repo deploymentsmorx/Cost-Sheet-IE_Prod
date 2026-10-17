@@ -1,10 +1,11 @@
 import type { Client } from "../types/clients"
 import { API_BASE_URL } from "../lib/apiBase"
+import { apiFetch } from "../lib/authFetch"
 
 const BASE = API_BASE_URL + "/api/v1/clients"
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(BASE + path, {
+  const res = await apiFetch(BASE + path, {
     headers: { "Content-Type": "application/json" },
     ...options,
   })

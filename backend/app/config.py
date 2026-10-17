@@ -9,6 +9,7 @@ _env_file = _here.parent.parent / ".env"  # project root
 
 class Settings(BaseSettings):
     database_url: str
+    auth_api_url: str = "http://smorx-inspection-api:9686"
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
     # Comma-separated list of allowed CORS origins (e.g. the frontend's Render URL in production)
