@@ -1,10 +1,15 @@
 {
   "$schema": "../gen/schemas/remote-schema.json",
   "identifier": "costsheet-web",
-  "description": "Cost Sheet web application with no desktop system commands exposed.",
+  "description": "Cost Sheet web application with narrowly scoped activation verification commands.",
   "windows": ["main"],
   "remote": {
     "urls": ["http://100.51.165.76:28080/**"]
   },
-  "permissions": []
+  "permissions": [
+    "core:default",
+    "allow-get-device-info",
+    "allow-desktop-activation-check",
+    "allow-activate-costsheet"
+  ]
 }

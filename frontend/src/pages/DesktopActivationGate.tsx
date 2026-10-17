@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties, type FormEvent } from "react"
+import { useEffect, useState, type CSSProperties, type FormEvent, type ReactNode } from "react"
 import { invoke } from "@tauri-apps/api/core"
 
 export const COSTSHEET_URL = "http://100.51.165.76:28080"
@@ -14,7 +14,7 @@ type ActivationRequest = {
   hostname: string
 }
 
-export function DesktopActivationGate() {
+export function DesktopActivationGate({ children }: { children: ReactNode }) {
   const [device, setDevice] = useState<DeviceInfo | null>(null)
   const [licenseKey, setLicenseKey] = useState("")
   const [installPassword, setInstallPassword] = useState("")
@@ -23,6 +23,7 @@ export function DesktopActivationGate() {
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
   const [checking, setChecking] = useState(true)
+  const [authorized, setAuthorized] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -37,7 +38,10 @@ export function DesktopActivationGate() {
           const activated = await invoke<boolean>("check_costsheet_activation", {
             deviceId: info.deviceId,
           })
-          if (!cancelled && activated) window.location.replace(COSTSHEET_URL)
+          if (!cancelled && activated) {
+            if (window.location.origin === new URL(COSTSHEET_URL).origin) setAuthorized(true)
+            else window.location.replace(COSTSHEET_URL)
+          }
           else if (!cancelled) setChecking(false)
         } catch (ex) {
           if (!cancelled) {
@@ -73,13 +77,15 @@ export function DesktopActivationGate() {
     }
 
     try {
-      await invoke("activate_costsheet", { request })
-      window.location.replace(COSTSHEET_URL)
+      const token = await invoke<string>("activate_costsheet", { request })
+      window.location.replace(`${COSTSHEET_URL}/#costsheet_token=${encodeURIComponent(token)}`)
     } catch (ex) {
       setError(messageOf(ex))
       setBusy(false)
     }
   }
+
+  if (authorized) return <>{children}</>
 
   if (checking) {
     return <div style={styles.screen}><div style={styles.card}>Checking Cost Sheet license…</div></div>

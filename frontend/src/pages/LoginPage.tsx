@@ -16,10 +16,8 @@ export function LoginPage() {
     setError("")
     setBusy(true)
     try {
-      const user = await login(email.trim(), password)
-      const destination = user.must_change_password
-        ? "/change-password"
-        : (location.state as { from?: { pathname?: string } } | null)?.from?.pathname || "/clients"
+      await login(email.trim(), password)
+      const destination = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname || "/clients"
       navigate(destination, { replace: true })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Sign-in failed. Please try again.")

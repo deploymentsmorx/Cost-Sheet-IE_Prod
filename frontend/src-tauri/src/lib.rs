@@ -101,7 +101,7 @@ fn check_costsheet_activation(device_id: String) -> Result<bool, String> {
 }
 
 #[tauri::command]
-fn activate_costsheet(request: ActivationRequest) -> Result<(), String> {
+fn activate_costsheet(request: ActivationRequest) -> Result<String, String> {
   if request.license_key.trim().is_empty()
     || request.install_password.is_empty()
     || request.username.trim().is_empty()
@@ -128,10 +128,17 @@ fn activate_costsheet(request: ActivationRequest) -> Result<(), String> {
       ureq::Error::Transport(transport) => format!("Could not reach the license server: {transport}"),
     })?;
 
-  if !(200..300).contains(&response.status()) {
-    return Err(response_error(response));
-  }
-  Ok(())
+  let body = response
+    .into_string()
+    .map_err(|err| format!("Could not read license server response: {err}"))?;
+  let value: serde_json::Value = serde_json::from_str(&body)
+    .map_err(|_| "The license server returned an unreadable activation response".to_string())?;
+  value
+    .get("token")
+    .and_then(serde_json::Value::as_str)
+    .filter(|token| !token.is_empty())
+    .map(str::to_owned)
+    .ok_or_else(|| "Activation succeeded but the license server did not return a sign-in token".to_string())
 }
 
 fn response_error(response: ureq::Response) -> String {

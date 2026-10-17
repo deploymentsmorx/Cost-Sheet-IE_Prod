@@ -7,7 +7,7 @@ import { PartsPage } from "./pages/PartsPage"
 import { CostingSheetPage } from "./pages/CostingSheetPage"
 import { ProjectSummaryPage } from "./pages/ProjectSummaryPage"
 import { ClientsPage } from "./pages/ClientsPage"
-import { COSTSHEET_URL, DesktopActivationGate } from "./pages/DesktopActivationGate"
+import { DesktopActivationGate } from "./pages/DesktopActivationGate"
 import { LoginPage } from "./pages/LoginPage"
 import { ChangePasswordPage } from "./pages/ChangePasswordPage"
 import { AuthProvider, useAuth } from "./auth"
@@ -92,37 +92,29 @@ function RequireAuth() {
   return <Outlet />
 }
 
-function RequirePasswordChanged() {
-  const { user } = useAuth()
-  if (user?.must_change_password) return <Navigate to="/change-password" replace />
-  return <Outlet />
-}
-
 function AppRoutes() {
   const { user, ready } = useAuth()
   if (!ready) {
     return <main className="flex-1 grid place-items-center text-sm text-slate-500">Checking your sign-in…</main>
   }
 
-  const homePath = user ? (user.must_change_password ? "/change-password" : "/clients") : "/login"
+  const homePath = user ? "/clients" : "/login"
 
   return (
     <>
-      {user && !user.must_change_password && <NavBar />}
+      {user && <NavBar />}
       <main className="flex-1">
         <Routes>
           <Route path="/login" element={user ? <Navigate to={homePath} replace /> : <LoginPage />} />
           <Route element={<RequireAuth />}>
-            <Route path="/change-password" element={user?.must_change_password ? <ChangePasswordPage /> : <Navigate to="/clients" replace />} />
-            <Route element={<RequirePasswordChanged />}>
-              <Route path="/" element={<Navigate to="/clients" replace />} />
-              <Route path="/clients" element={<ClientsPage />} />
-              <Route path="/workbooks" element={<ProjectsPage />} />
-              <Route path="/workbooks/:workbookId/sheets" element={<PartsPage />} />
-              <Route path="/workbooks/:workbookId/summary" element={<ProjectSummaryPage />} />
-              <Route path="/sheets/:sheetId" element={<CostingSheetPage />} />
-              <Route path="/norms" element={<NormsPage />} />
-            </Route>
+            <Route path="/change-password" element={<ChangePasswordPage />} />
+            <Route path="/" element={<Navigate to="/clients" replace />} />
+            <Route path="/clients" element={<ClientsPage />} />
+            <Route path="/workbooks" element={<ProjectsPage />} />
+            <Route path="/workbooks/:workbookId/sheets" element={<PartsPage />} />
+            <Route path="/workbooks/:workbookId/summary" element={<ProjectSummaryPage />} />
+            <Route path="/sheets/:sheetId" element={<CostingSheetPage />} />
+            <Route path="/norms" element={<NormsPage />} />
           </Route>
           <Route path="*" element={<Navigate to={homePath} replace />} />
         </Routes>
@@ -132,10 +124,12 @@ function AppRoutes() {
 }
 
 export default function App() {
-  if (isTauriRuntime() && window.location.origin !== new URL(COSTSHEET_URL).origin) {
-    return <DesktopActivationGate />
-  }
+  if (isTauriRuntime()) return <DesktopActivationGate><CostSheetApplication /></DesktopActivationGate>
 
+  return <CostSheetApplication />
+}
+
+function CostSheetApplication() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>

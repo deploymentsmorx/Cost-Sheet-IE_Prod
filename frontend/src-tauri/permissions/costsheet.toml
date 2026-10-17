@@ -12,3 +12,8 @@ commands.allow = ["check_costsheet_activation"]
 identifier = "allow-activate-costsheet"
 description = "Allow activating a Cost Sheet license on this device."
 commands.allow = ["activate_costsheet"]
+
+[[permission]]
+identifier = "allow-desktop-activation-check"
+description = "Allow the Cost Sheet WebView to verify this computer's activation."
+commands.allow = ["get_device_info", "check_costsheet_activation"]
