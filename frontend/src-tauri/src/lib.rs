@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-const LICENSE_API_BASE: &str = "http://100.51.165.76:9686";
+const LICENSE_API_BASE: &str = "http://100.51.165.76:19686";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
