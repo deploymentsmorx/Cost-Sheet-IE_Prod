@@ -7,7 +7,7 @@ import { PartsPage } from "./pages/PartsPage"
 import { CostingSheetPage } from "./pages/CostingSheetPage"
 import { ProjectSummaryPage } from "./pages/ProjectSummaryPage"
 import { ClientsPage } from "./pages/ClientsPage"
-import { DesktopActivationGate } from "./pages/DesktopActivationGate"
+import { COSTSHEET_URL, DesktopActivationGate } from "./pages/DesktopActivationGate"
 import { LoginPage } from "./pages/LoginPage"
 import { ChangePasswordPage } from "./pages/ChangePasswordPage"
 import { AuthProvider, useAuth } from "./auth"
@@ -132,7 +132,9 @@ function AppRoutes() {
 }
 
 export default function App() {
-  if (isTauriRuntime()) return <DesktopActivationGate />
+  if (isTauriRuntime() && window.location.origin !== new URL(COSTSHEET_URL).origin) {
+    return <DesktopActivationGate />
+  }
 
   return (
     <QueryClientProvider client={queryClient}>

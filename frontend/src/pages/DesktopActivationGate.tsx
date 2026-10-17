@@ -1,7 +1,7 @@
 import { useEffect, useState, type CSSProperties, type FormEvent } from "react"
 import { invoke } from "@tauri-apps/api/core"
 
-const COSTSHEET_URL = "http://100.51.165.76:28080"
+export const COSTSHEET_URL = "http://100.51.165.76:28080"
 
 type DeviceInfo = { deviceId: string; hostname: string }
 
