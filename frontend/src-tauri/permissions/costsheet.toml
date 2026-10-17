@@ -1,0 +1,14 @@
+[[permission]]
+identifier = "allow-get-device-info"
+description = "Allow reading the local device ID for license activation."
+commands.allow = ["get_device_info"]
+
+[[permission]]
+identifier = "allow-check-costsheet-activation"
+description = "Allow checking this device's Cost Sheet activation status."
+commands.allow = ["check_costsheet_activation"]
+
+[[permission]]
+identifier = "allow-activate-costsheet"
+description = "Allow activating a Cost Sheet license on this device."
+commands.allow = ["activate_costsheet"]

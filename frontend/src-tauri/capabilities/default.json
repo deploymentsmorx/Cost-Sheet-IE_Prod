@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Permissions for the local Cost Sheet activation screen.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "allow-get-device-info",
+    "allow-check-costsheet-activation",
+    "allow-activate-costsheet"
+  ]
+}

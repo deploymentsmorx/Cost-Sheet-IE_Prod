@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/remote-schema.json",
+  "identifier": "costsheet-web",
+  "description": "Cost Sheet web application with no desktop system commands exposed.",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["http://100.51.165.76:28080/**"]
+  },
+  "permissions": []
+}

@@ -7,6 +7,7 @@ import { PartsPage } from "./pages/PartsPage"
 import { CostingSheetPage } from "./pages/CostingSheetPage"
 import { ProjectSummaryPage } from "./pages/ProjectSummaryPage"
 import { ClientsPage } from "./pages/ClientsPage"
+import { DesktopActivationGate } from "./pages/DesktopActivationGate"
 import { cn } from "./lib/utils"
 
 const queryClient = new QueryClient({
@@ -67,6 +68,8 @@ function NavBar() {
 }
 
 export default function App() {
+  if (isTauriRuntime()) return <DesktopActivationGate />
+
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
@@ -88,4 +91,9 @@ export default function App() {
       <Toaster richColors position="top-right" />
     </QueryClientProvider>
   )
+}
+
+function isTauriRuntime(): boolean {
+  return typeof window !== "undefined" &&
+    ("__TAURI_INTERNALS__" in window || "__TAURI__" in window)
 }
