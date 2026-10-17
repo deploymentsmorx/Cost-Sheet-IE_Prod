@@ -60,9 +60,19 @@ function NavBar() {
       </nav>
 
       <div className="ml-auto flex items-center gap-3 pl-2">
-        <span className="hidden lg:inline max-w-52 truncate text-xs" style={{ color: "rgba(255,255,255,0.55)" }} title={user?.email}>
-          {user?.full_name || user?.email}
-        </span>
+        {user?.role === "super_admin" ? (
+          <a
+            href={`${window.location.protocol}//${window.location.hostname}:18080/#/admin`}
+            className="rounded-md border border-sky-700 px-3 py-1.5 text-xs font-semibold text-sky-200 transition hover:border-sky-400 hover:bg-sky-400/10"
+            title="Open the Super Admin portal"
+          >
+            Super Admin Portal
+          </a>
+        ) : (
+          <span className="hidden lg:inline max-w-52 truncate text-xs" style={{ color: "rgba(255,255,255,0.55)" }} title={user?.email}>
+            {user?.full_name || user?.email}
+          </span>
+        )}
         <button
           type="button"
           onClick={signOut}
